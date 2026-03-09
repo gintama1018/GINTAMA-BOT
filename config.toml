@@ -56,7 +56,7 @@ backend              = "gemini"
 # Option 1 (recommended): set env var  GEMINI_API_KEY=your_key_here
 # Option 2: paste the key directly below (never commit to public git)
 gemini_api_key       = ""             # or set GEMINI_API_KEY env var
-gemini_model         = "gemini-2.0-flash"   # fast + free tier
+gemini_model         = "gemini-2.5-flash"   # fast + free tier
 
 # ---- Ollama settings (for when you switch to local) ---------
 host                 = "http://localhost:11434"
