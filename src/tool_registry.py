@@ -265,15 +265,64 @@ class ToolExecutor:
         self._router = router      # CommandRouter instance
 
     def execute(self, tool_name: str, args: dict) -> dict:
-        """Dispatch tool_name to its handler. Returns result dict."""
+        """
+        Dispatch tool_name to its handler. Returns result dict.
+
+        Pre-execution pipeline:
+          1. Permission check  — deny if required permission not granted
+          2. Schema validation — reject malformed LLM-generated args early
+          3. Isolated execution — run inside a worker thread with timeout
+                                  so a crashing tool never kills the agent
+        """
+        # ── 1. Permission check ──────────────────────────────────────── #
+        try:
+            from src.permission_registry import get_registry
+            ok, reason = get_registry().check(tool_name)
+            if not ok:
+                from src.event_bus import get_bus
+                get_bus().publish("permission_denied", {"tool": tool_name, "reason": reason})
+                return {"status": "permission_denied", "error": reason}
+        except Exception as perm_exc:
+            self.logger.warning(f"Permission check error for '{tool_name}': {perm_exc}")
+
+        # ── 2. Schema validation ─────────────────────────────────────── #
+        try:
+            from src.tool_schemas import validate
+            validated_args, schema_error = validate(tool_name, args)
+            if schema_error:
+                return {"status": "invalid_args", "error": schema_error}
+            args = validated_args
+        except Exception as val_exc:
+            self.logger.warning(f"Schema validation error for '{tool_name}': {val_exc}")
+
+        # ── 3. Isolated execution in worker thread with timeout ─────── #
         handler = getattr(self, f"_tool_{tool_name}", None)
         if handler is None:
             return {"status": "error", "error": f"Unknown tool: {tool_name}"}
-        try:
-            return handler(args)
-        except Exception as exc:
+
+        import threading
+        _result: dict = {}
+        _exc_holder: list = []
+
+        def _run():
+            try:
+                _result.update(handler(args))
+            except Exception as exc:
+                _exc_holder.append(exc)
+
+        worker = threading.Thread(target=_run, daemon=True)
+        worker.start()
+        worker.join(timeout=60)  # 60-second hard cap per tool call
+
+        if worker.is_alive():
+            return {"status": "error", "error": f"Tool '{tool_name}' timed out after 60 seconds"}
+
+        if _exc_holder:
+            exc = _exc_holder[0]
             self.logger.warning(f"Tool '{tool_name}' raised: {exc}")
             return {"status": "error", "error": str(exc)}
+
+        return _result if _result else {"status": "ok"}
 
     # ---------------------------------------------------------------- #
     # Internal helpers                                                  #

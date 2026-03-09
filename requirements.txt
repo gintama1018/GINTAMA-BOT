@@ -9,6 +9,7 @@ plyer
 waitress
 google-generativeai
 python-dotenv
+pydantic>=2.0
 
 # ── Phase 2: Telegram ────────────────────────────
 python-telegram-bot>=20.0

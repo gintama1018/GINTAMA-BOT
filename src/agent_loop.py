@@ -82,7 +82,8 @@ class AgentLoop:
         self._router = router
         self._session_manager = session_manager
         self._tool_exec = None  # lazy-init ToolExecutor
-        self._model = None      # lazy-init Gemini model
+        self._model = None      # lazy-init Gemini model (with tools)
+        self._planner = None    # lazy-init TaskPlanner (plain model, no tools)
 
     # ---------------------------------------------------------------- #
     # Public interface                                                  #
@@ -121,6 +122,15 @@ class AgentLoop:
         Returns:
             Final text response from Gemini after all tool calls complete.
         """
+        # ── Permission / meta-commands (/permit, /revoke, /permissions) ── #
+        try:
+            from src.permission_registry import handle_permission_command
+            perm_response = handle_permission_command(user_message)
+            if perm_response is not None:
+                return perm_response
+        except Exception:
+            pass
+
         model = self._get_model()
         if model is None:
             return (
@@ -129,6 +139,18 @@ class AgentLoop:
             )
 
         tool_exec = self._get_tool_executor()
+
+        # ── Optional multi-step planning pass ────────────────────────── #
+        planning_preamble = ""
+        try:
+            planner = self._get_planner()
+            if planner and planner.should_plan(user_message):
+                plan = planner.plan(user_message)
+                if not plan.is_empty():
+                    planning_preamble = f"\n\n[Plan generated: {plan.summary()}]\n\n"
+                    self.logger.debug("AgentLoop: using plan:\n%s", plan.summary())
+        except Exception as plan_exc:
+            self.logger.warning("AgentLoop: planner error (continuing without plan): %s", plan_exc)
 
         # ── Load session history ──────────────────────────────────────── #
         session_id = None
@@ -159,7 +181,7 @@ class AgentLoop:
         response_text = ""
 
         try:
-            response = chat.send_message(user_message)
+            response = chat.send_message(user_message + planning_preamble)
         except Exception as exc:
             self.logger.warning(f"AgentLoop: Gemini call failed: {exc}")
             return f"Gemini error: {exc}"
@@ -272,6 +294,19 @@ class AgentLoop:
                 self.config, self.logger, self._executor, self._router
             )
         return self._tool_exec
+
+    def _get_planner(self):
+        """Return a TaskPlanner (created once and cached)."""
+        if self._planner is None:
+            try:
+                from src.planner import make_planner
+                from src.tool_registry import get_declarations
+                tool_names = [td["name"] for td in get_declarations()]
+                self._planner = make_planner(self.config, tool_names)
+            except Exception as exc:
+                self.logger.warning("AgentLoop: could not init planner: %s", exc)
+                self._planner = False  # sentinel: don't retry
+        return self._planner if self._planner else None
 
     def _get_model(self):
         """Initialise Gemini model with all tool declarations. Cached after first call."""
