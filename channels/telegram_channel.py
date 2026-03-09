@@ -35,6 +35,7 @@ class TelegramChannel(BaseChannel):
         super().__init__(config, agent_loop, pairing_manager, jarvis_logger)
         self.rate_limiter = rate_limiter
         self._app = None
+        self._bot_loop = None
         self._thread: Optional[threading.Thread] = None
 
         tg_cfg = config.get("channels", {}).get("telegram", {})
@@ -71,17 +72,17 @@ class TelegramChannel(BaseChannel):
         self._thread.join()  # Block main thread
 
     def stop(self) -> None:
-        if self._app:
+        if self._app and self._bot_loop:
             asyncio.run_coroutine_threadsafe(
-                self._app.stop(), asyncio.get_event_loop()
+                self._app.stop(), self._bot_loop
             )
 
     def send_message(self, sender_id: str, text: str, **kwargs) -> None:
-        """Non-async send — schedules into the event loop."""
-        if self._app:
+        """Non-async send — schedules into the bot's own event loop."""
+        if self._app and self._bot_loop:
             asyncio.run_coroutine_threadsafe(
                 self._app.bot.send_message(chat_id=sender_id, text=text),
-                asyncio.get_event_loop()
+                self._bot_loop
             )
 
     # ---------------------------------------------------------------- #
@@ -104,6 +105,8 @@ class TelegramChannel(BaseChannel):
                 "Run: pip install python-telegram-bot"
             )
             return
+
+        self._bot_loop = asyncio.get_event_loop()
 
         app = (
             Application.builder()

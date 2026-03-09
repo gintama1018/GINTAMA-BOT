@@ -122,7 +122,7 @@ class LLMAdapter:
             os.environ.get("GEMINI_API_KEY")
             or llm_cfg.get("gemini_api_key", "")
         )
-        self._gemini_model = llm_cfg.get("gemini_model", "gemini-2.0-flash")
+        self._gemini_model = llm_cfg.get("gemini_model", "gemini-2.5-flash")
 
         # Ollama settings
         self._ollama_host  = llm_cfg.get("host", "http://localhost:11434").rstrip("/")

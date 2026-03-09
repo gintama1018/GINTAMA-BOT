@@ -108,11 +108,12 @@ class SecurityAudit:
         if os.name == "nt":
             self._ok("config.toml", "Windows — file permission model applies")
         else:
-            mode = oct(stat.S_IMODE(os.stat(config_path).st_mode))
-            if "o+r" not in mode:
-                self._ok("config.toml", f"Permissions {mode}")
+            raw_mode = stat.S_IMODE(os.stat(config_path).st_mode)
+            mode = oct(raw_mode)
+            if raw_mode & stat.S_IROTH:
+                self._warn("config.toml", f"Permissions {mode} — world-readable! Run: chmod 600 config.toml")
             else:
-                self._warn("config.toml", f"Permissions {mode} — consider: chmod 600 config.toml")
+                self._ok("config.toml", f"Permissions {mode}")
 
     def _check_env_file(self) -> None:
         env_path = Path(".env")

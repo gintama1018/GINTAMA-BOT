@@ -39,7 +39,11 @@ class CameraModule:
         except ImportError:
             return {"ok": False, "error": "opencv-python not installed. Run: pip install opencv-python"}
 
-        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+        import platform
+        if platform.system() == "Windows":
+            cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(camera_index)
         if not cap.isOpened():
             cap = cv2.VideoCapture(camera_index)
         if not cap.isOpened():

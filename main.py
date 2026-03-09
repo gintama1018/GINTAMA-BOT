@@ -61,7 +61,7 @@ def _build_shared_components(config: dict):
 
     jarvis_logger = setup_logger(config.get("tcc", {}).get("log_level", "INFO"))
     session_manager = SessionManager()
-    agent_loop = AgentLoop(session_manager=session_manager)
+    agent_loop = AgentLoop(config=config, logger=jarvis_logger, session_manager=session_manager)
     pairing_manager = PairingManager()
     rate_limiter = RateLimiter()
     return agent_loop, pairing_manager, rate_limiter, jarvis_logger

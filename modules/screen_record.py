@@ -42,8 +42,8 @@ class ScreenRecorder:
 
         # ffmpeg command — Windows (gdigrab) or Linux (x11grab)
         import platform
-        sys = platform.system()
-        if sys == "Windows":
+        platform_name = platform.system()
+        if platform_name == "Windows":
             cmd = [
                 "ffmpeg", "-y",
                 "-f", "gdigrab",
@@ -54,7 +54,7 @@ class ScreenRecorder:
                 "-t", str(duration) if duration > 0 else "999999",
                 str(out_path)
             ]
-        elif sys == "Linux":
+        elif platform_name == "Linux":
             cmd = [
                 "ffmpeg", "-y",
                 "-f", "x11grab",
@@ -66,7 +66,7 @@ class ScreenRecorder:
                 str(out_path)
             ]
         else:
-            return {"ok": False, "error": f"Unsupported OS: {sys}"}
+            return {"ok": False, "error": f"Unsupported OS: {platform_name}"}
 
         try:
             self._output_path = out_path

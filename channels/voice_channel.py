@@ -47,6 +47,7 @@ class VoiceChannel(BaseChannel):
         self._running = False
         self._audio_queue: queue.Queue = queue.Queue()
         self._whisper_model = None
+        self._use_faster = False
         self._tts_engine = None
         self._local_sender_id = "voice_local"
 
