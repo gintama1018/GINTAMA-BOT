@@ -8,3 +8,4 @@ mss
 plyer
 waitress
 google-generativeai
+python-dotenv

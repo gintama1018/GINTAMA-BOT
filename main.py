@@ -12,6 +12,13 @@ Usage:
 import sys
 import os
 
+# Load .env file before anything else — sets GEMINI_API_KEY etc.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+except ImportError:
+    pass  # dotenv optional — env vars can be set manually too
+
 # Ensure project root is in path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
