@@ -71,3 +71,64 @@ timeout              = 30
 # morning = "07:00 daily"
 # backup  = "23:00 daily"
 # focus   = "09:00 weekdays"
+
+# ============================================================
+# CHANNELS — messaging integrations
+# ============================================================
+
+[channels.telegram]
+# Get token from @BotFather on Telegram
+# Or set TELEGRAM_BOT_TOKEN env var (preferred)
+token          = ""                # leave blank — use TELEGRAM_BOT_TOKEN env var
+dm_policy      = "pairing"         # "pairing" | "allowlist" | "open" | "disabled"
+require_mention = false            # In groups: require @botmention (true recommended)
+owner_id       = ""                # Your Telegram user ID (get from @userinfobot)
+allowlist      = []                # ["123456789", "987654321"] — always-allowed user IDs
+# Run: python main.py --telegram
+
+[channels.discord]
+# Get token from https://discord.com/developers/applications
+# Enable "Message Content Intent" in bot settings
+token          = ""                # or set DISCORD_BOT_TOKEN env var
+dm_policy      = "pairing"
+require_mention = true             # In servers: only respond when @mentioned
+allowlist      = []                # Discord user IDs that are always allowed
+guild_allowlist = []               # If set, only respond in these server IDs
+# Run: python main.py --discord
+
+[channels.voice]
+# Requires: pip install faster-whisper pyttsx3 sounddevice numpy
+wake_word      = "jarvis"          # Say this word to activate
+language       = "en"              # Whisper language code
+whisper_model  = "base"            # "tiny" | "base" | "small" | "medium"
+tts_rate       = 175               # Words per minute for text-to-speech
+voice_index    = 0                 # TTS voice index (0 = default system voice)
+# Run: python main.py --voice
+
+# ============================================================
+# WEB GATEWAY — browser-based chat UI (Phase 4)
+# ============================================================
+
+[gateway]
+host           = "127.0.0.1"       # NEVER change to 0.0.0.0 — use Tailscale for remote
+port           = 7071
+token          = ""                 # Optional: require ?token=xxx to access UI
+                                    # Or set JARVIS_WEB_TOKEN env var
+# Access:
+#   Chat UI:   http://127.0.0.1:7071/
+#   Dashboard: http://127.0.0.1:7071/dashboard
+#   WebSocket: ws://127.0.0.1:7071/ws/{sender_id}
+# Run: python main.py --web
+
+# ============================================================
+# AGENT SECURITY
+# ============================================================
+
+[agent]
+listen_host    = "127.0.0.1"
+listen_port    = 7070
+auth_token     = "CHANGE_ME_strong_secret_token_here"
+
+[agent.rate_limit]
+per_minute     = 10
+per_day        = 100

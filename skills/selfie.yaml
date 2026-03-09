@@ -1,0 +1,32 @@
+name: selfie
+description: Take a selfie from phone or PC webcam and save it
+trigger_phrases:
+  - take a selfie
+  - take my photo
+  - take a photo
+  - selfie
+  - capture my face
+  - take a picture of me
+
+steps:
+  - tool: phone_screenshot
+    description: "If phone connected, take a front camera photo via ADB"
+    fallback: true
+
+  - tool: system_screenshot
+    description: "Fallback: take a screenshot of the current screen"
+    condition: "phone_unavailable"
+
+  - respond: |
+      Here is your selfie! 📸
+      Saved to: {result.path}
+
+      Say "send this to my phone" to transfer it, or "take another one" for a retake.
+
+metadata:
+  phase: 6
+  requires:
+    - modules.camera
+  optional_deps:
+    - opencv-python
+    - adb

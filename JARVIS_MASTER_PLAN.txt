@@ -1,0 +1,1337 @@
+
+╔══════════════════════════════════════════════════════════════════════════════════╗
+║          JARVIS — COMPLETE MASTER PLAN                                         ║
+║          OpenClaw Feature-for-Feature, 100% Free & Open Source                 ║
+║          Built on TCC Terminal Command Center v2.0                              ║
+║          March 2026                                                             ║
+╚══════════════════════════════════════════════════════════════════════════════════╝
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ WHAT THIS DOCUMENT IS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  OpenClaw uses paid cloud services (Anthropic Pro/Max $100-200/mo, Cloudflare,
+  ElevenLabs voice, etc.) and its UI runs on their hosted gateway.
+
+  JARVIS = everything OpenClaw does, rebuilt:
+    ✓ Open source only
+    ✓ $0/month (Gemini free tier → Ollama when ready)
+    ✓ Runs fully on YOUR machines
+    ✓ All data stays local
+    ✓ Same or better security model
+
+  This document maps EVERY OpenClaw feature to its JARVIS equivalent and gives
+  you the exact build order to get there.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ THE CRITICAL THING YOU IDENTIFIED: THE AGENT LOOP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  You said: "open camera and take my selfie" — and it DID it.
+
+  This is NOT a command parser. This is an AGENT LOOP. The difference:
+
+  COMMAND PARSER (what TCC currently has):
+    "open camera" → maps to ONE command → executes it → done
+    "open camera and take my selfie" → FAILS (two steps, no plan)
+
+  AGENT LOOP (what OpenClaw has, what JARVIS needs):
+    "open camera and take my selfie"
+      → AI THINKS: what steps are needed?
+          Step 1: phone launch camera
+          Step 2: wait 2 seconds (camera needs to open)
+          Step 3: phone screenshot (selfie = front camera screenshot)
+          Step 4: pull screenshot to local machine
+          Step 5: send image back to you on Telegram
+      → AI EXECUTES each step as a "tool call"
+      → AI CHECKS: did each step succeed?
+      → AI REPORTS: sends you the image on Telegram
+
+  How it works technically:
+    Gemini 2.5 Flash has NATIVE function/tool calling.
+    You define your TCC commands as "tools" in the API call.
+    Gemini decides which tools to call and in what order.
+    The result of each tool call goes back to Gemini.
+    Gemini decides what to do next.
+    Loop continues until task is complete.
+
+  This is the CORE of everything. Build this first.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ FULL ARCHITECTURE: JARVIS v3.0
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                        YOUR CHANNELS                                     │
+  │  Telegram  WhatsApp  Discord  Slack  Signal  WebChat  Voice  Terminal   │
+  └─────────────────────────────┬───────────────────────────────────────────┘
+                                 │ message received
+                                 ▼
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                    JARVIS GATEWAY (FastAPI + WebSocket)                  │
+  │                      runs on port 7071, loopback only                    │
+  │                                                                          │
+  │  ┌──────────────┐  ┌─────────────────┐  ┌────────────────────────────┐  │
+  │  │  Auth Layer  │  │  Session Store  │  │  Channel Router            │  │
+  │  │  (pairing,   │  │  (SQLite,       │  │  (message → right agent)   │  │
+  │  │  allowlists, │  │  per-sender     │  │                            │  │
+  │  │  tokens)     │  │  isolated)      │  │                            │  │
+  │  └──────────────┘  └─────────────────┘  └────────────────────────────┘  │
+  └─────────────────────────────┬───────────────────────────────────────────┘
+                                 │
+                                 ▼
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                        AGENT LOOP ENGINE                                 │
+  │                                                                          │
+  │   Inbound message                                                        │
+  │        ↓                                                                 │
+  │   Load session history (SQLite)                                          │
+  │        ↓                                                                 │
+  │   Build system prompt + history + tools list                             │
+  │        ↓                                                                 │
+  │   Call Gemini 2.5 Flash (or Ollama when ready)                           │
+  │        ↓                                                                 │
+  │   ┌─── Did AI call a tool? ────────────────────────────────────────┐    │
+  │   │  YES                              NO                            │    │
+  │   │   ↓                               ↓                            │    │
+  │   │  Execute tool via TCC Router    Send reply to user             │    │
+  │   │   ↓                             Save to session history        │    │
+  │   │  Tool result → back to Gemini                                  │    │
+  │   │   ↓                                                             │    │
+  │   │  Loop until no more tool calls                                  │    │
+  │   └─────────────────────────────────────────────────────────────────┘   │
+  └─────────────────────────────┬───────────────────────────────────────────┘
+                                 │
+                                 ▼
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                      TOOL EXECUTOR (TCC Router)                          │
+  │                                                                          │
+  │  local system commands  │  HTTP agents (laptop/server)  │  ADB (phone)  │
+  │  browser control        │  file operations              │  notifications │
+  │  cron scheduler         │  web search                   │  screenshots   │
+  └─────────────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                         YOUR DEVICES                                     │
+  │    PC / Laptop (Windows/Linux/Mac)   Android Phone   Remote Server      │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ COMPLETE FEATURE MAP: OpenClaw → JARVIS Free Equivalent
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SECTION 1 — THE CORE: AGENT LOOP                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  OpenClaw:  Pi-agent-core runtime, tool streaming, lifecycle events
+             Uses Claude Opus 4.6 (requires $100-200/mo Pro/Max subscription)
+
+  JARVIS:    Python agent loop engine
+             Uses Gemini 2.5 Flash (free tier) → Ollama mistral (offline)
+             Tools defined as Gemini function_declarations
+             Loop: message → LLM → tool call → execute → LLM → tool call → ...
+             Until LLM returns text with no tool call = task complete
+
+  File:      src/agent_loop.py (NEW — core of everything)
+
+  Key design:
+    - Serialized per session (one loop at a time per user/session)
+    - Each tool call is a real function execution on the device
+    - Tool results go back to LLM as function_response
+    - Max 20 tool call iterations per turn (safety limit)
+    - Timeout: 120 seconds per agent turn
+    - On timeout: send "Still working on it..." and continue
+    - On error: catch, log, report clean message to user
+
+  Tool definitions (Gemini function_declarations format):
+    phone_launch     - launch app on phone
+    phone_screenshot - take screenshot of phone screen
+    phone_battery    - get battery level
+    phone_volume     - set volume
+    phone_lock       - lock phone
+    phone_pull       - transfer file from phone to PC
+    phone_push       - transfer file from PC to phone
+    phone_notify     - send notification to phone
+    system_info      - get local system info
+    system_screenshot - screenshot local screen
+    system_open      - open app/file locally
+    system_run       - run shell command (requires confirmation)
+    system_notify    - local desktop notification
+    device_info      - get info from any registered device
+    device_run       - run command on registered device
+    file_ls          - list files
+    file_read        - read file contents
+    file_write       - write file (requires confirmation)
+    browser_open     - open URL in headless browser
+    browser_screenshot - screenshot a URL
+    web_search       - search the web (SerpAPI free tier or DuckDuckGo)
+    schedule_task    - schedule a recurring task
+    send_message     - send message back to user on their channel
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SECTION 2 — CHANNELS (HOW USER TALKS TO JARVIS)                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ── 2A. TELEGRAM ──────────────────────────────────────────────────────────────
+
+    OpenClaw:  grammY library (TypeScript)
+    JARVIS:    python-telegram-bot (Python, MIT license, free forever)
+               pip install python-telegram-bot
+
+    What it enables:
+      - Send text commands → JARVIS executes on your devices
+      - Send voice messages → transcribed (Whisper) → executed
+      - Receive screenshots and files back in chat
+      - Use Telegram from anywhere in the world via mobile
+      - THIS IS THE PRIMARY INTERFACE
+
+    Security (mirrors OpenClaw exactly):
+      - dmPolicy = "pairing" by default
+        → Unknown senders get a pairing code
+        → You approve with: jarvis pairing approve telegram <code>
+        → Code expires in 1 hour
+        → Only 3 pending requests max
+      - allowFrom: list of approved Telegram user IDs (not usernames — IDs)
+      - Groups: requireMention = True by default
+        → Bot only responds when @mentioned in group chats
+      - All message IDs logged for audit
+
+    File: channels/telegram_channel.py (NEW)
+
+  ── 2B. DISCORD ───────────────────────────────────────────────────────────────
+
+    OpenClaw:  discord.js
+    JARVIS:    discord.py (Python, MIT license, free)
+               pip install discord.py
+
+    Security:
+      - Bot token stored in env var: DISCORD_BOT_TOKEN
+      - allowFrom: list of Discord user IDs
+      - Guild (server) allowlist: only specified servers
+      - requireMention = True in servers
+      - DM pairing same as Telegram
+
+    File: channels/discord_channel.py (NEW)
+
+  ── 2C. WHATSAPP ──────────────────────────────────────────────────────────────
+
+    OpenClaw:  Baileys (unofficial WhatsApp Web API, reverse-engineered)
+    JARVIS:    whatsapp-web.js via a local Node.js bridge process
+               OR use the official WhatsApp Business Cloud API (free tier: 1000 msgs/month)
+
+    Recommended: Official API (free tier)
+      - Create WhatsApp Business account (free)
+      - Facebook Business Manager (free)
+      - WhatsApp Cloud API (free: 1000 conversations/month)
+      - A simple phone number (can be your existing number if you convert it)
+
+    Security:
+      - Same pairing/allowFrom model as Telegram
+      - Webhook verification token (HMAC-SHA256)
+      - All inbound messages verified before processing
+
+    File: channels/whatsapp_channel.py (NEW)
+
+  ── 2D. SIGNAL ────────────────────────────────────────────────────────────────
+
+    OpenClaw:  signal-cli
+    JARVIS:    signal-cli (Java, open source, GPL)
+               Runs as a local daemon, JARVIS talks to it via JSON-RPC
+
+    Installation:
+      Download signal-cli binary from GitHub
+      Register a number (can use a virtual number)
+      Run: signal-cli daemon --socket
+
+    Security:
+      - End-to-end encrypted by Signal protocol (strongest channel available)
+      - allowFrom: phone numbers allowlist
+      - Pairing same model as other channels
+
+    File: channels/signal_channel.py (NEW)
+
+  ── 2E. SLACK ─────────────────────────────────────────────────────────────────
+
+    OpenClaw:  Slack Bolt SDK
+    JARVIS:    slack-bolt (Python, Apache 2.0, free)
+               pip install slack-bolt
+
+    Security:
+      - Bot token + Signing secret from Slack app
+      - Channel allowlist (only respond in approved channels)
+      - User allowlist
+      - Mention-gating in public channels
+
+    File: channels/slack_channel.py (NEW)
+
+  ── 2F. GOOGLE CHAT ───────────────────────────────────────────────────────────
+
+    OpenClaw:  Google Chat API
+    JARVIS:    google-cloud-pubsub + google-auth (Python, Apache 2.0)
+               Google Chat API is free for personal Google accounts
+
+    File: channels/gchat_channel.py (NEW)
+
+  ── 2G. MATRIX ────────────────────────────────────────────────────────────────
+
+    OpenClaw:  Extension channel
+    JARVIS:    matrix-nio (Python, Apache 2.0, free)
+               pip install matrix-nio
+               Works with any Matrix homeserver (matrix.org is free)
+               Self-host with Synapse for full control
+
+    Bonus: Matrix bridges can proxy to almost any other platform
+
+    File: channels/matrix_channel.py (NEW)
+
+  ── 2H. WEB CHAT (Browser UI) ────────────────────────────────────────────────
+
+    OpenClaw:  Served from Gateway, uses their hosted gateway WebSocket
+    JARVIS:    FastAPI + WebSocket + single HTML file served locally
+               Accessible at: http://localhost:7071/chat
+               Over Tailscale: http://100.x.x.x:7071/chat
+
+    Features:
+      - Chat interface in browser
+      - Shows tool calls as they happen (streaming)
+      - Upload images/files directly in chat
+      - Works on mobile browser via Tailscale
+      - No internet needed — pure local
+
+    File: web/chat.html (NEW — single file, no framework needed)
+         gateway/websocket_server.py (NEW)
+
+  ── 2I. IMESSAGE / BLUEBUBBLES ────────────────────────────────────────────────
+
+    OpenClaw:  BlueBubbles (recommended) or legacy imsg
+    JARVIS:    BlueBubbles self-hosted on macOS (free, open source)
+               Connect via local HTTP webhook
+               Only works if you have a Mac running macOS with iMessage signed in
+
+    File: channels/bluebubbles_channel.py (NEW — macOS only)
+
+  ── 2J. MICROSOFT TEAMS ──────────────────────────────────────────────────────
+
+    OpenClaw:  Bot Framework + Teams app
+    JARVIS:    botbuilder-python (MIT, free)
+               pip install botbuilder-integration-aiohttp
+               Requires Microsoft 365 account (free personal tier works)
+
+    File: channels/teams_channel.py (NEW)
+
+  ── 2K. VOICE (LOCAL TERMINAL) ────────────────────────────────────────────────
+
+    OpenClaw:  ElevenLabs (paid voice synthesis)
+    JARVIS:    Whisper (OpenAI, MIT, free) for speech-to-text
+               pyttsx3 (free) or Coqui TTS (free, open source) for text-to-speech
+               Runs 100% offline, no API key
+
+    Trigger:
+      python main.py --voice
+      → records mic until silence (2 second pause)
+      → transcribes with Whisper locally
+      → sends to agent loop
+      → speaks result back with pyttsx3
+
+    File: channels/voice_channel.py (NEW)
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SECTION 3 — NODES (DEVICE CONTROL)                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  OpenClaw uses "nodes" — device agents that expose hardware capabilities
+  (camera, screen recording, notifications, location) via the Gateway WebSocket.
+
+  JARVIS equivalent: the existing agent/ HTTP server, extended.
+
+  ── 3A. CAMERA ACCESS ─────────────────────────────────────────────────────────
+
+    Android:
+      ADB mode:   adb shell am start -a android.media.action.IMAGE_CAPTURE
+                  Wait, then adb pull the resulting image
+                  OR: adb exec-out screencap -p → screenshot of camera preview
+
+      Agent mode: Termux + Android camera API via Python script
+                  OR: IP Webcam app (free) → stream accessible via HTTP → grab frame
+
+    PC (Windows/Linux/Mac):
+      opencv-python (pip install opencv-python) → grab from webcam
+      cv2.VideoCapture(0).read() → save as PNG → return to agent
+
+    File: modules/camera.py (NEW)
+
+  ── 3B. SCREEN RECORDING ──────────────────────────────────────────────────────
+
+    OpenClaw:  screen.record node command
+    JARVIS:    Windows: ffmpeg -f gdigrab -t 10 -i desktop output.mp4
+               Linux:   ffmpeg -f x11grab -t 10 -i :0.0 output.mp4
+               macOS:   screencapture -V 10 output.mp4
+               All wrapped in modules/screen_record.py
+
+    Already have: mss for screenshots
+    New: ffmpeg wrapper for video recording
+
+    File: modules/screen_record.py (NEW)
+
+  ── 3C. LOCATION ──────────────────────────────────────────────────────────────
+
+    OpenClaw:  location.get node command
+    JARVIS:    IP geolocation (ipapi.co — free, no key needed)
+               For phone: adb shell dumpsys location | grep "last known"
+               For PC:    requests.get("https://ipapi.co/json/")
+
+    File: modules/location.py (NEW)
+
+  ── 3D. NOTIFICATIONS ─────────────────────────────────────────────────────────
+
+    Already implemented: plyer (existing)
+    Extend: persistent notification history, action buttons (on Android via ADB)
+
+  ── 3E. CANVAS (VISUAL WORKSPACE) ────────────────────────────────────────────
+
+    OpenClaw:  Agent-driven visual workspace with A2UI (proprietary)
+    JARVIS:    A simple HTML canvas served via FastAPI
+               Agent can inject HTML/CSS/JS via WebSocket eval command
+               User sees results in browser
+               Not as polished as OpenClaw's A2UI but functionally equivalent
+
+    File: web/canvas.html (NEW)
+         gateway/canvas_handler.py (NEW)
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SECTION 4 — TOOLS (WHAT THE AGENT CAN DO)                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ── 4A. BROWSER CONTROL ───────────────────────────────────────────────────────
+
+    OpenClaw:  Dedicated openclaw Chrome/Chromium with CDP control
+    JARVIS:    Playwright (Microsoft, Apache 2.0, free)
+               pip install playwright && playwright install chromium
+
+    What it enables:
+      - "Open this URL and screenshot it"
+      - "Search for X and give me the top result"
+      - "Fill in this form for me"
+      - "Log in to my bank and check my balance" (powerful but be careful)
+      - Web scraping triggered by voice/chat command
+
+    Security (mirrors OpenClaw):
+      - Dedicated browser profile for JARVIS (never your personal profile)
+      - SSRF protection: block localhost/internal IPs by default
+      - allowedDomains list in config
+      - browser_control = false by default; enable per-agent
+      - Confirmation required for actions that click/fill/submit
+
+    File: tools/browser_tool.py (NEW)
+
+  ── 4B. WEB SEARCH ────────────────────────────────────────────────────────────
+
+    OpenClaw:  Uses model's built-in web search (Claude has it)
+    JARVIS:    Option A: DuckDuckGo HTML scraping (free, no API key)
+                         pip install duckduckgo-search
+               Option B: SerpAPI (free tier: 100 searches/month)
+               Option C: Gemini's built-in Google Search grounding (free with API)
+                         → RECOMMENDED: enable search grounding in Gemini API call
+
+    File: tools/web_search_tool.py (NEW)
+
+  ── 4C. CRON / SCHEDULED TASKS ───────────────────────────────────────────────
+
+    OpenClaw:  Built-in cron tool the AI can call to schedule future tasks
+    JARVIS:    Extend existing scheduler.py to be AI-callable
+               AI can call: schedule_task(cron="07:00 daily", command="morning skill")
+               Persistent: store scheduled tasks in SQLite
+               Survive restarts: load from DB on startup
+
+    File: src/scheduler.py (EXTEND existing)
+
+  ── 4D. WEBHOOKS ──────────────────────────────────────────────────────────────
+
+    OpenClaw:  Webhook endpoint that triggers agent with external events
+    JARVIS:    FastAPI POST endpoint at /webhook/{hook_id}
+               HMAC-SHA256 verified (same as OpenClaw)
+               Maps to: trigger agent with webhook payload as message
+               Use cases: GitHub PR merged → notify; server alert → auto-fix
+
+    File: gateway/webhook_handler.py (NEW)
+
+  ── 4E. GMAIL INTEGRATION ────────────────────────────────────────────────────
+
+    OpenClaw:  Gmail Pub/Sub (push emails into agent as context)
+    JARVIS:    Gmail API (OAuth 2.0, free) via google-auth-oauthlib
+               Poll every 5 minutes OR use Gmail push notifications (Pub/Sub, free)
+               Agent can: read emails, summarize inbox, reply, organize labels
+
+    File: tools/gmail_tool.py (NEW)
+
+  ── 4F. FILE OPERATIONS ──────────────────────────────────────────────────────
+
+    Already exists: modules/files.py
+    Extend with:
+      - read file and inject contents into agent context
+      - create/edit files based on AI instruction
+      - semantic file search (grep, find with regex)
+      - diff/patch files
+
+  ── 4G. CODE EXECUTION ───────────────────────────────────────────────────────
+
+    OpenClaw:  exec tool (runs bash/PowerShell/shell commands)
+               Sandboxed via Docker for non-trusted sessions
+    JARVIS:    system_run tool (already exists, shell=False)
+               Extend with Docker sandbox wrapper for untrusted requests
+               Confirmation required: always for run commands
+               Allowlist: pre-approved commands that need no confirmation
+
+    Docker sandbox (optional, for public agents):
+      docker run --rm --network=none alpine:latest sh -c "{command}"
+
+  ── 4H. SESSIONS TOOLS (MULTI-AGENT) ─────────────────────────────────────────
+
+    OpenClaw:  sessions_list, sessions_history, sessions_send, sessions_spawn
+               Agents can talk to each other
+    JARVIS:    SQLite-backed session store
+               agents can read their own session history
+               Multi-agent: spawn a "subagent" with a specific task
+               Return results to parent agent
+               Use case: "research assistant" + "executor" as separate agents
+
+    File: src/session_manager.py (NEW)
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SECTION 5 — SECURITY MODEL (MIRRORS OPENCLAW EXACTLY)                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ── 5A. GATEWAY BINDING ───────────────────────────────────────────────────────
+
+    JARVIS Gateway MUST:
+      Default: bind to 127.0.0.1 ONLY
+      To allow Tailscale access: bind to Tailscale IP (100.x.x.x)
+      NEVER bind to 0.0.0.0 by default
+      Config: gateway.bind = "loopback" | "tailscale" | "custom"
+      Warning printed on startup if bind is anything other than loopback
+
+  ── 5B. DM PAIRING ────────────────────────────────────────────────────────────
+
+    Exactly mirrors OpenClaw's pairing model:
+
+    Unknown sender → receives pairing code (6-digit, expires 1 hour)
+    You approve:  jarvis pairing approve telegram abc123
+    Approved sender ID written to: ~/.jarvis/credentials/{channel}-allowlist.json
+
+    Config options:
+      dmPolicy = "pairing"   (default — unknown senders get code)
+      dmPolicy = "allowlist" (unknown senders silently blocked)
+      dmPolicy = "open"      (anyone — NEVER USE unless testing)
+      dmPolicy = "disabled"  (ignore all DMs)
+
+    Max 3 pending pairing requests per channel.
+    jarvis pairing list telegram — see pending requests
+    jarvis pairing revoke telegram <id> — remove approved sender
+
+  ── 5C. SESSION ISOLATION ────────────────────────────────────────────────────
+
+    Each sender gets an ISOLATED session:
+      - Separate conversation history
+      - Separate memory
+      - Cannot see other users' sessions
+      - Cannot trigger actions from another user's context
+
+    session.dmScope = "per-channel-peer"
+    This is the SECURE DEFAULT. Never use "main" if multiple people can DM.
+
+  ── 5D. GROUP CHAT SECURITY ──────────────────────────────────────────────────
+
+    requireMention = True (default)
+      JARVIS only responds in group chats when @mentioned
+      Prevents ambient listening in group conversations
+
+    groupAllowFrom: list of allowed user IDs in groups
+      Even in allowed groups, filter who can trigger the bot
+
+    Group allowlist: only respond in specific groups/servers/channels
+
+  ── 5E. TOOL POLICY ──────────────────────────────────────────────────────────
+
+    Per-agent tool profiles:
+
+    TRUSTED (your own messages):
+      All tools enabled
+      run/exec requires confirmation for destructive commands
+      Full device access
+
+    FAMILY/SHARED (approved friends):
+      browser: disabled
+      run/exec: disabled
+      file write: disabled
+      read-only access to device info, screenshots
+
+    PUBLIC (open DMs — not recommended):
+      ONLY messaging tools
+      No device access
+      No file access
+      No browser
+
+    Sandbox mode (optional, Docker required):
+      Wrap run/exec in Docker container with --network=none
+      Prevents any network access from executed code
+      Prevents filesystem access beyond container
+
+  ── 5F. PROMPT INJECTION PROTECTION ─────────────────────────────────────────
+
+    Mirrors OpenClaw's guidance exactly:
+
+    Defense in depth:
+      1. Only trusted senders can trigger the bot (pairing/allowlists)
+      2. Tool allowlist limits blast radius
+      3. Confirmation required for destructive actions
+      4. All tool calls logged with sender identity
+      5. Web content treated as untrusted (separate reader context)
+
+    System prompt injection:
+      "Ignore all previous instructions" → Gemini 2.5 Flash resistant
+      Logged and flagged if detected
+      When Ollama is used: enable model-level injection resistance prompts
+
+    Content injection (web pages, emails, attachments):
+      Reader agent pattern: separate "reader" agent with NO tools
+      Reader summarizes content → summary passed to main agent
+      Main agent never directly reads untrusted external content
+
+  ── 5G. CREDENTIAL SECURITY ──────────────────────────────────────────────────
+
+    All credentials stored in: ~/.jarvis/
+    File permissions: 700 for directory, 600 for all files
+    Set on install: chmod 700 ~/.jarvis && chmod 600 ~/.jarvis/*.json
+
+    Never stored in code or Git:
+      GEMINI_API_KEY — env var
+      TELEGRAM_BOT_TOKEN — env var
+      DISCORD_BOT_TOKEN — env var
+      JARVIS_AUTH_TOKEN — env var
+      All channel tokens — env vars
+
+    startup check: if token == placeholder → refuse to start, print error
+
+    Token rotation checklist (printed by: jarvis security rotate):
+      1. Generate new token
+      2. Update env var
+      3. Restart JARVIS
+      4. Update remote agent configs
+      5. Verify old token no longer works
+
+  ── 5H. JARVIS SECURITY AUDIT COMMAND ────────────────────────────────────────
+
+    OpenClaw has: openclaw security audit
+    JARVIS has:   jarvis security audit
+
+    Checks:
+      ✓ Gateway bind mode (warns if not loopback)
+      ✓ Auth token not placeholder, length >= 32 chars
+      ✓ Config file permissions (should be 600)
+      ✓ ~/.jarvis directory permissions (should be 700)
+      ✓ DM policies for all channels (warns if any = "open")
+      ✓ Group policies (warns if requireMention = False)
+      ✓ Tool policies (warns if run/exec enabled with open DMs)
+      ✓ Rate limiting enabled
+      ✓ Pairing allowlists reviewed recently
+      ✓ Agent token not default placeholder
+      ✓ No tokens found in logs or session transcripts
+      ✓ Tailscale running (if tailscale transport configured)
+
+    File: src/security_audit.py (NEW)
+
+  ── 5I. RATE LIMITING ────────────────────────────────────────────────────────
+
+    Per-sender rate limits:
+      10 messages per minute (configurable)
+      100 messages per day (configurable)
+      Failed auth: 5 attempts in 60s → block IP for 5 minutes
+
+    Stored in: in-memory dict + optional Redis if you have it
+    On limit hit: send message "Too many requests. Try again in X minutes."
+
+  ── 5J. AUDIT LOGGING ────────────────────────────────────────────────────────
+
+    Every action logged with:
+      timestamp, sender_id, channel, message, tool_calls[], results, latency
+
+    Redaction: API keys, tokens, passwords auto-redacted from logs
+    Retention: 7 days by default (configurable)
+    Location: ~/.jarvis/logs/audit-YYYY-MM-DD.jsonl
+
+    jarvis logs --last 20 — view recent
+    jarvis logs --sender telegram:123456 — filter by sender
+    jarvis logs --since 1h — filter by time
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SECTION 6 — SESSION & MEMORY                                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ── 6A. PERSISTENT SESSION HISTORY ────────────────────────────────────────────
+
+    OpenClaw:  Session transcripts in ~/.openclaw/agents/<id>/sessions/*.jsonl
+    JARVIS:    SQLite database: ~/.jarvis/sessions.db
+
+    Schema:
+      sessions(id, channel, sender_id, started_at, last_active)
+      messages(id, session_id, role, content, tool_calls, tool_results, timestamp)
+
+    On each agent turn:
+      - Load last 50 messages for this sender
+      - Inject as conversation history into LLM call
+      - After response: save all new messages to DB
+
+    Session isolation: each sender_id + channel = isolated session
+    jarvis sessions list — see all sessions
+    jarvis sessions clear telegram:123456 — reset a session
+    jarvis sessions export — backup all sessions
+
+  ── 6B. MEMORY / COMPACTION ──────────────────────────────────────────────────
+
+    OpenClaw:  /compact command — summarize context when token limit approached
+    JARVIS:    Auto-compaction: when session history > 80% of context window
+               LLM summarizes the history: "Summarize our conversation so far"
+               Summary replaces old messages in context
+               Original messages preserved in DB
+
+    /new or /reset — start fresh session
+    /compact — manually compact right now
+
+  ── 6C. MEMORY INJECTION ─────────────────────────────────────────────────────
+
+    User preferences stored in: ~/.jarvis/memory/{sender_id}.json
+    Examples:
+      "User prefers responses in Hindi"
+      "User's phone is a Pixel 7 Pro"
+      "User's PC name is DESKTOP-ABC123"
+      "User's preferred music app is Spotify"
+
+    Injected into every system prompt for that user.
+    AI can update this: "Remember that I prefer..."
+    jarvis memory show — see what JARVIS remembers
+    jarvis memory clear — wipe memory
+
+  ── 6D. SLASH COMMANDS ───────────────────────────────────────────────────────
+
+    All channels support these slash commands (from authorized senders):
+      /status   — session info, model, token usage
+      /new      — reset session
+      /reset    — same as /new
+      /compact  — compact context
+      /memory   — show/edit memory
+      /skills   — list available skills
+      /security — run security audit
+      /help     — show available commands
+      /version  — show JARVIS version
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SECTION 7 — SKILLS SYSTEM                                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ── 7A. EXISTING SKILLS (KEEP) ────────────────────────────────────────────────
+
+    morning.yaml  — morning routine
+    focus.yaml    — focus mode
+    shutdown.yaml — end of day routine
+    backup.yaml   — backup photos
+
+  ── 7B. NEW SKILLS TO ADD ────────────────────────────────────────────────────
+
+    These are multi-step sequences the AI executes autonomously:
+
+    selfie.yaml:
+      trigger: ["take a selfie", "selfie", "take my photo"]
+      steps:
+        - phone launch camera
+        - wait 2s (camera needs to open)
+        - phone screenshot
+        - pull screenshot to PC
+        - send image to user
+
+    meeting.yaml:
+      trigger: ["meeting mode", "I'm in a meeting"]
+      steps:
+        - phone volume 0
+        - system notify "Meeting mode active"
+        - set DND for 1 hour
+
+    presentation.yaml:
+      trigger: ["presentation mode", "start presenting"]
+      steps:
+        - phone lock
+        - system open [slideshow app]
+        - system screenshot → send to user as confirmation
+
+    summary.yaml:
+      trigger: ["what did I miss", "catch me up"]
+      steps:
+        - read recent notifications (if configured)
+        - read recent emails (if Gmail configured)
+        - summarize → send to user
+
+  ── 7C. SKILLS REGISTRY ──────────────────────────────────────────────────────
+
+    OpenClaw has: ClawHub (their cloud skills registry)
+    JARVIS has:   Local skills folder + GitHub-based skill sharing
+
+    Skills format: YAML (existing format, keep it)
+    Install skill: copy YAML to skills/ folder, JARVIS auto-loads it
+    Share skills: post to GitHub as a Gist or repo
+    No cloud dependency needed
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SECTION 8 — WEB INTERFACES                                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ── 8A. CONTROL UI (DASHBOARD) ───────────────────────────────────────────────
+
+    OpenClaw:  Hosted on their gateway, requires their infra
+    JARVIS:    FastAPI serves HTML from local gateway
+               http://localhost:7071/ (loopback only)
+               http://100.x.x.x:7071/ (via Tailscale)
+
+    Dashboard shows:
+      - Connected channels and their status
+      - Registered devices and online/offline status
+      - Recent activity log
+      - Pairing requests (approve/reject buttons)
+      - Active sessions
+      - Tool policy per agent
+      - Security audit summary
+
+    File: web/dashboard.html (NEW — single file, vanilla JS)
+
+  ── 8B. WEB CHAT ─────────────────────────────────────────────────────────────
+
+    OpenClaw:  WebChat via their gateway WebSocket
+    JARVIS:    WebSocket at ws://localhost:7071/ws/chat
+               HTML at http://localhost:7071/chat
+
+    Features:
+      - Chat UI with message history
+      - Tool call progress shown in real time (streaming)
+      - File upload → push to device
+      - Image display (screenshots returned by agent)
+      - Copy code blocks
+      - Markdown rendering
+
+    File: web/chat.html (NEW — single HTML file)
+
+  ── 8C. TUI (TERMINAL UI) ─────────────────────────────────────────────────────
+
+    OpenClaw:  Web TUI
+    JARVIS:    Existing terminal REPL (keep and extend)
+               Add: rich live display for tool call progress
+               Add: streaming output as agent works
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SECTION 9 — REMOTE ACCESS                                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ── 9A. TAILSCALE (PRIMARY) ──────────────────────────────────────────────────
+
+    OpenClaw:  Tailscale Serve/Funnel
+    JARVIS:    Tailscale (free personal tier, up to 100 devices)
+               Gateway binds to Tailscale IP: 100.x.x.x
+               All devices on Tailscale mesh can reach it
+               Traffic is encrypted by WireGuard (Tailscale uses WireGuard)
+
+    Setup:
+      1. Install Tailscale on all devices
+      2. All join the same tailnet (same account)
+      3. JARVIS gateway binds to Tailscale IP only
+      4. Tailscale ACLs control which devices can reach which ports
+
+    Security: Tailscale uses device identity + WireGuard encryption
+    No open ports on internet. No port forwarding. No VPN server to manage.
+
+  ── 9B. SSH TUNNEL (ALTERNATIVE) ─────────────────────────────────────────────
+
+    OpenClaw:  SSH tunnel support for remote gateway
+    JARVIS:    autossh (keeps SSH tunnel alive across disconnects)
+               ssh -R 7071:localhost:7071 user@remote-server
+               Access JARVIS from anywhere via remote server
+
+  ── 9C. MATTERMOST / SELF-HOSTED ALTERNATIVE ─────────────────────────────────
+
+    If you want full self-hosting with no external accounts:
+    Mattermost (open source, free self-hosted team chat)
+    Run on your own server
+    JARVIS connects as a bot
+    Your entire team uses Mattermost
+    Full control, no Telegram/Discord dependency
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SECTION 10 — MODELS                                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ── 10A. NOW: GEMINI 2.5 FLASH ────────────────────────────────────────────────
+
+    Provider:  Google Gemini API (you have the key)
+    Model:     gemini-2.5-flash
+    Cost:      Free tier (generous) → pay per use after
+    Speed:     Fast (cloud)
+    Offline:   No — needs internet
+    Tool use:  Native function calling ✓
+    Vision:    Yes — can analyze images ✓
+
+    Use for:   Testing, validation, showing people how it works
+
+  ── 10B. FUTURE: OLLAMA (FULLY OFFLINE) ─────────────────────────────────────
+
+    Provider:  Local Ollama server
+    Models:    mistral (7B), llama3 (8B), qwen2.5 (7B), phi3 (3.8B)
+    Cost:      $0 forever
+    Speed:     Depends on GPU. CPU-only: ~10 tok/s
+    Offline:   Yes — works with zero internet
+    Tool use:  Yes — Ollama supports tool calling with mistral/llama3 ✓
+
+    Switch:    Change config.toml provider = "ollama"
+               No other code changes needed
+
+  ── 10C. FAILOVER ────────────────────────────────────────────────────────────
+
+    OpenClaw:  Model failover (rotate through auth profiles)
+    JARVIS:    provider_chain = ["gemini", "ollama"]
+               Try Gemini first → if fails/offline → try Ollama
+               If both fail → pattern matching fallback (existing parser)
+
+    Config:
+      [llm]
+      provider = "gemini"            # primary
+      fallback_provider = "ollama"   # fallback
+      fallback_on_error = true
+      fallback_on_timeout = true
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SECTION 11 — PLATFORMS (OS SUPPORT)                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ── 11A. WINDOWS ─────────────────────────────────────────────────────────────
+
+    Already supported: agent/handlers/windows.py
+    Add: PowerShell script for install/setup
+    Add: Windows startup entry (Task Scheduler, runs on login)
+    Add: Windows notification via plyer + win10toast
+
+  ── 11B. LINUX ───────────────────────────────────────────────────────────────
+
+    Already supported: agent/handlers/linux.py
+    Add: systemd service file (agent runs as service)
+    Add: install.sh script
+
+  ── 11C. MACOS ───────────────────────────────────────────────────────────────
+
+    Already supported: agent/handlers/linux.py (same for macOS)
+    Add: launchd plist (macOS service)
+    Add: macOS notification via osascript
+    Add: menu bar indicator (rumps library — free, MIT)
+
+  ── 11D. ANDROID (PHONE) ─────────────────────────────────────────────────────
+
+    ADB mode:    already supported (modules/phone.py)
+    Termux mode: already supported (agent/handlers/android.py)
+    Add: Termux:Widget shortcut to start/stop JARVIS agent
+    Add: Termux:Tasker integration (trigger JARVIS from Tasker)
+
+  ── 11E. IOS (LIMITED) ───────────────────────────────────────────────────────
+
+    OpenClaw:  Full iOS node (Canvas, Voice Wake, camera)
+    JARVIS:    Limited — iOS is sandboxed, ADB not available
+    Options:
+      a) Shortcuts app → HTTP request to JARVIS gateway
+      b) Safari shortcut → WebChat on device
+      c) SSH via iSH (free iOS app) → run commands locally
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SECTION 12 — MULTI-AGENT ROUTING                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  OpenClaw:  Route channels to isolated agents with separate configs
+  JARVIS:    Agent profiles in config.toml
+
+  Examples:
+    main_agent:
+      channels: [telegram, discord, webchat]
+      tools: all
+      sandbox: false
+
+    family_agent:
+      channels: [whatsapp_family_group]
+      tools: [info, screenshot, notify]
+      sandbox: true
+      run_exec: false
+
+    public_agent:
+      channels: [matrix_public_room]
+      tools: []
+      read_only: true
+
+  Each agent has:
+    - Own session history
+    - Own tool policy
+    - Own allowlist
+    - Own system prompt customization
+
+  File: src/agent_router.py (NEW — routes inbound message to right agent)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ BUILD ORDER — PHASE BY PHASE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ ╔═══════════════════════════════════════════════════════════════════════════╗
+ ║  PHASE 1 — THE AGENT LOOP (1-2 weeks)                                    ║
+ ║  This is the entire foundation. Do nothing else until this works.        ║
+ ╚═══════════════════════════════════════════════════════════════════════════╝
+
+  Files to create:
+    src/agent_loop.py         — the loop engine
+    src/tool_registry.py      — maps tool names to Python functions
+    src/session_manager.py    — SQLite session store
+
+  Files to modify:
+    src/llm.py                — replace Ollama-only with Gemini function calling
+    config.toml               — add llm.provider, llm.gemini_api_key
+
+  Test:
+    python main.py
+    > open youtube on my phone
+    JARVIS thinks → calls phone_launch(app="youtube") → ADB executes → ✓
+    > take a screenshot of my phone and send it to me
+    JARVIS thinks → calls phone_screenshot() → pulls image → displays it → ✓
+    > what is the weather and also check my phone battery
+    JARVIS thinks → calls web_search() AND phone_battery() → combines answers → ✓
+
+  Success criteria:
+    Multi-step commands work end to end
+    Tool calls visible in logs
+    Results come back correctly
+
+ ╔═══════════════════════════════════════════════════════════════════════════╗
+ ║  PHASE 2 — TELEGRAM BRIDGE (3-5 days)                                    ║
+ ║  This makes JARVIS accessible from anywhere                              ║
+ ╚═══════════════════════════════════════════════════════════════════════════╝
+
+  Files to create:
+    channels/telegram_channel.py  — bot polling + message dispatch
+    channels/base_channel.py      — abstract base class for all channels
+    src/pairing_manager.py        — pairing code generation and approval
+
+  Dependencies:
+    pip install python-telegram-bot
+
+  Setup:
+    1. Create bot via @BotFather on Telegram
+    2. Get bot token
+    3. Add to .env: TELEGRAM_BOT_TOKEN=...
+    4. Add your Telegram user ID to config.toml allowFrom
+    5. python main.py --telegram
+
+  Test:
+    Message the bot on Telegram
+    DM should require pairing code first time
+    After pairing: all commands work
+    "open camera and take my selfie" → photo arrives in Telegram
+
+  Success criteria:
+    Can control all devices from Telegram DM
+    Pairing works correctly
+    Strangers get pairing code, not access
+
+ ╔═══════════════════════════════════════════════════════════════════════════╗
+ ║  PHASE 3 — SECURITY HARDENING (2-3 days)                                 ║
+ ║  Lock everything down before showing anyone                              ║
+ ╚═══════════════════════════════════════════════════════════════════════════╝
+
+  Files to create:
+    src/security_audit.py         — jarvis security audit command
+    src/rate_limiter.py           — per-sender rate limiting
+
+  Implement:
+    - Rate limiting (10 msg/min per sender)
+    - Failed auth lockout (5 fails → 5 min block)
+    - Config file permission check on startup
+    - Token placeholder detection (refuse to start)
+    - Log redaction (API keys never appear in logs)
+    - Audit command output
+
+  Test:
+    jarvis security audit → all checks pass
+    Send 15 messages in 1 minute → rate limit triggered
+    Unknown sender DMs bot → pairing code sent
+    Unknown sender tries 6 times → blocked
+
+ ╔═══════════════════════════════════════════════════════════════════════════╗
+ ║  PHASE 4 — WEB UI (3-4 days)                                             ║
+ ╚═══════════════════════════════════════════════════════════════════════════╝
+
+  Files to create:
+    gateway/web_gateway.py    — FastAPI server (replaces Flask agent)
+    web/chat.html             — WebChat interface
+    web/dashboard.html        — Control panel
+    web/canvas.html           — Visual workspace
+
+  Test:
+    Open http://localhost:7071/ in browser → Dashboard visible
+    Open http://localhost:7071/chat → chat works, same as Telegram
+    Send "screenshot phone" → image appears in browser chat
+
+ ╔═══════════════════════════════════════════════════════════════════════════╗
+ ║  PHASE 5 — MORE CHANNELS (1 week)                                        ║
+ ╚═══════════════════════════════════════════════════════════════════════════╝
+
+  Add in this order (easiest to hardest):
+    1. Discord (discord.py)
+    2. Slack (slack-bolt)
+    3. WhatsApp (official API or whatsapp-web.js bridge)
+    4. Signal (signal-cli)
+    5. Matrix (matrix-nio)
+
+ ╔═══════════════════════════════════════════════════════════════════════════╗
+ ║  PHASE 6 — BROWSER CONTROL (3-4 days)                                    ║
+ ╚═══════════════════════════════════════════════════════════════════════════╝
+
+  pip install playwright
+  playwright install chromium
+
+  "screenshot google.com" → headless browser → image back in Telegram ✓
+  "search for best Python tutorials" → Google → top 3 results summarized ✓
+  "open my email and read the subject lines" → Gmail in browser → summarize ✓
+
+ ╔═══════════════════════════════════════════════════════════════════════════╗
+ ║  PHASE 7 — VOICE (2-3 days)                                              ║
+ ╚═══════════════════════════════════════════════════════════════════════════╝
+
+  pip install openai-whisper pyttsx3
+
+  python main.py --voice
+  Speak → transcribe → execute → speak back result ✓
+  Full offline. No API. No cloud.
+
+ ╔═══════════════════════════════════════════════════════════════════════════╗
+ ║  PHASE 8 — SWITCH TO OLLAMA (when users satisfied)                       ║
+ ╚═══════════════════════════════════════════════════════════════════════════╝
+
+  Install Ollama: curl https://ollama.ai/install.sh | sh
+  Download model: ollama pull mistral
+  Config change:  provider = "ollama"
+  Zero other changes. Done.
+
+  Keep Gemini as fallback (for when internet available and better quality needed)
+
+ ╔═══════════════════════════════════════════════════════════════════════════╗
+ ║  PHASE 9 — ADVANCED FEATURES (ongoing)                                   ║
+ ╚═══════════════════════════════════════════════════════════════════════════╝
+
+  - Multi-agent routing (personal/family/public profiles)
+  - Gmail integration (read/reply emails from Telegram)
+  - Calendar integration (Google Calendar API — free)
+  - Webhook triggers (GitHub, server alerts, etc.)
+  - iOS Shortcuts integration
+  - macOS menu bar app (rumps library)
+  - Android Tasker integration
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ NEW FILE STRUCTURE (JARVIS v3.0)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+jarvis/
+├── main.py                        # entry point
+├── config.toml                    # all configuration
+├── .env                           # secrets (never commit)
+├── .env.example                   # template (commit this)
+├── requirements.txt
+├── install.sh                     # Linux/macOS setup
+├── install.bat                    # Windows setup
+│
+├── src/
+│   ├── agent_loop.py              # *** THE CORE: agent loop engine ***
+│   ├── tool_registry.py           # maps tool names → Python functions
+│   ├── agent_router.py            # routes messages to correct agent profile
+│   ├── session_manager.py         # SQLite session + memory store
+│   ├── pairing_manager.py         # DM pairing codes + allowlists
+│   ├── rate_limiter.py            # per-sender rate limiting
+│   ├── security_audit.py          # jarvis security audit
+│   ├── parser.py                  # existing — keep as fallback
+│   ├── router.py                  # existing — keep for device routing
+│   ├── executor.py                # existing — keep for local commands
+│   ├── discovery.py               # existing — keep for device discovery
+│   ├── llm.py                     # REWRITE: Gemini + Ollama with failover
+│   ├── scheduler.py               # existing + extend with AI-callable cron
+│   ├── logger.py                  # existing + extend with audit logging
+│   └── cli.py                     # existing terminal REPL — keep
+│
+├── channels/
+│   ├── base_channel.py            # abstract channel interface
+│   ├── telegram_channel.py        # *** PRIMARY CHANNEL ***
+│   ├── discord_channel.py
+│   ├── whatsapp_channel.py
+│   ├── signal_channel.py
+│   ├── slack_channel.py
+│   ├── matrix_channel.py
+│   ├── gchat_channel.py
+│   ├── teams_channel.py
+│   ├── bluebubbles_channel.py     # macOS iMessage via BlueBubbles
+│   └── voice_channel.py           # local microphone + Whisper
+│
+├── gateway/
+│   ├── web_gateway.py             # FastAPI server (replaces Flask)
+│   ├── websocket_server.py        # WebSocket for web chat + streaming
+│   ├── webhook_handler.py         # external webhook triggers
+│   └── canvas_handler.py          # canvas visual workspace
+│
+├── tools/
+│   ├── browser_tool.py            # Playwright browser control
+│   ├── web_search_tool.py         # DuckDuckGo / Gemini grounding
+│   ├── gmail_tool.py              # Gmail API integration
+│   ├── camera_tool.py             # webcam + phone camera
+│   └── file_tool.py               # enhanced file operations
+│
+├── modules/                       # existing — keep all, extend
+│   ├── system.py
+│   ├── phone.py
+│   ├── files.py
+│   ├── network.py
+│   ├── notify.py
+│   ├── camera.py                  # NEW
+│   ├── screen_record.py           # NEW
+│   └── location.py                # NEW
+│
+├── agent/                         # existing HTTP agent — keep
+│   ├── agent.py                   # migrate to waitress from Flask dev server
+│   ├── agent.toml
+│   └── handlers/
+│       ├── windows.py
+│       ├── linux.py
+│       └── android.py
+│
+├── web/
+│   ├── dashboard.html             # Control panel
+│   ├── chat.html                  # WebChat interface
+│   └── canvas.html                # Visual workspace
+│
+├── skills/                        # existing + new skills
+│   ├── morning.yaml
+│   ├── focus.yaml
+│   ├── shutdown.yaml
+│   ├── backup.yaml
+│   ├── selfie.yaml                # NEW
+│   ├── meeting.yaml               # NEW
+│   ├── presentation.yaml          # NEW
+│   └── summary.yaml               # NEW
+│
+└── logs/
+    └── audit-YYYY-MM-DD.jsonl     # structured audit log
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ COST COMPARISON
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  OpenClaw full setup:
+    Claude Pro/Max: $100-200/month
+    Cloudflare Workers: $5/month
+    ElevenLabs voice: $5-22/month
+    TOTAL: $110-227/month = $1,320-$2,724/year
+
+  JARVIS:
+    Gemini 2.5 Flash (testing phase): FREE tier
+    Gemini 2.5 Flash (heavy use):     ~$1-5/month (personal use)
+    Ollama (final phase):              $0/month forever
+    Tailscale (networking):            $0 (free personal tier)
+    All other tools:                   $0 (all open source)
+    TOTAL: $0-5/month = $0-60/year
+
+  SAVING: $1,260-$2,664/year
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ DEPENDENCIES MASTER LIST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # Core (existing)
+  rich
+  prompt_toolkit
+  requests
+  flask → migrate to fastapi + uvicorn
+  psutil
+  pyyaml
+  mss
+  plyer
+
+  # LLM
+  google-generativeai          # Gemini API (Phase 1)
+  # ollama is a local server, Python calls it via requests (no pip package needed)
+
+  # Channels
+  python-telegram-bot          # Telegram (Phase 2) ***FIRST PRIORITY***
+  discord.py                   # Discord (Phase 5)
+  slack-bolt                   # Slack (Phase 5)
+  matrix-nio                   # Matrix (Phase 5)
+  botbuilder-integration-aiohttp  # Microsoft Teams (Phase 5)
+
+  # Gateway
+  fastapi                      # Web framework (Phase 4)
+  uvicorn                      # ASGI server (Phase 4)
+  websockets                   # WebSocket support (Phase 4)
+  waitress                     # Replace Flask dev server in agent (now)
+
+  # Tools
+  playwright                   # Browser control (Phase 6)
+  duckduckgo-search            # Web search (Phase 6)
+  google-auth-oauthlib         # Gmail (Phase 9)
+
+  # Voice
+  openai-whisper               # Speech-to-text (Phase 7)
+  pyttsx3                      # Text-to-speech (Phase 7)
+
+  # Device
+  opencv-python                # Camera (Phase 3)
+  pyaudio                      # Microphone (Phase 7)
+
+  # Security
+  cryptography                 # HMAC-SHA256 for webhook verification
+  python-dotenv                # Load .env file
+
+  # Database
+  # sqlite3 is built-in to Python — no install needed
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ WHAT YOU START WITH TOMORROW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Step 1: Say "start building Phase 1 — the agent loop"
+          I will write src/agent_loop.py, rewrite src/llm.py,
+          create src/tool_registry.py and src/session_manager.py
+
+  Step 2: Say "start Phase 2 — Telegram bridge"
+          I will write channels/telegram_channel.py
+          and src/pairing_manager.py
+
+  Step 3: Test on your own device. Share with friends.
+          When they like it → Phase 8 (switch to Ollama)
+
+  Ready when you are.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  JARVIS MASTER PLAN — END OF DOCUMENT
+  OpenClaw: 196k stars, $100-200/month, paid cloud
+  JARVIS:   Your own, $0/month, all local, all open source
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

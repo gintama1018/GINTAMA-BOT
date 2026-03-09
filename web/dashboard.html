@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS Dashboard</title>
+<style>
+  :root {
+    --bg: #0d0d0d; --bg2: #1a1a1a; --bg3: #242424;
+    --border: #333; --accent: #00bcd4; --text: #e0e0e0; --muted: #888;
+    --green: #4caf50; --yellow: #ff9800; --red: #f44336;
+    --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; }
+  header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 18px; color: var(--accent); letter-spacing: 1px; }
+  header .links { margin-left: auto; display: flex; gap: 16px; }
+  header a { color: var(--muted); text-decoration: none; font-size: 13px; }
+  header a:hover { color: var(--accent); }
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .card h2 { font-size: 13px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+  .stat-value { font-size: 42px; font-weight: 700; color: var(--accent); line-height: 1; }
+  .stat-label { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge.online { background: #1b3a1b; color: var(--green); }
+  .badge.offline { background: #3a1b1b; color: var(--red); }
+  .badge.warn { background: #3a2b1b; color: var(--yellow); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { color: var(--muted); font-weight: 500; text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 12px; border-bottom: 1px solid #222; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--bg3); }
+  .refresh-btn { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 16px; cursor: pointer; font-size: 13px; }
+  .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+  #last-refresh { font-size: 11px; color: var(--muted); margin-left: 8px; }
+  .section-header { display: flex; align-items: center; gap: 8px; margin: 24px 0 12px; }
+  .section-header h2 { font-size: 15px; font-weight: 600; }
+  .empty { color: var(--muted); font-size: 13px; padding: 20px; text-align: center; }
+  .pairing-item { display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; }
+  .pairing-code { font-family: monospace; font-size: 20px; font-weight: 700; letter-spacing: 3px; color: var(--accent); }
+  .pairing-meta { flex: 1; font-size: 12px; color: var(--muted); }
+  .approve-btn { background: #1b3a1b; color: var(--green); border: 1px solid #2a5a2a; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ JARVIS Dashboard</h1>
+  <div class="links">
+    <a href="/">Chat</a>
+    <button class="refresh-btn" onclick="refreshAll()">⟳ Refresh</button>
+    <span id="last-refresh"></span>
+  </div>
+</header>
+
+<div class="container">
+  <!-- Status cards -->
+  <div class="grid" id="stat-cards">
+    <div class="card">
+      <h2>Agent Status</h2>
+      <div id="agent-status"><span class="badge warn">Loading...</span></div>
+    </div>
+    <div class="card">
+      <h2>Active Sessions</h2>
+      <div class="stat-value" id="session-count">—</div>
+      <div class="stat-label">Chat sessions</div>
+    </div>
+    <div class="card">
+      <h2>Uptime</h2>
+      <div class="stat-value" id="uptime">—</div>
+      <div class="stat-label">seconds since boot</div>
+    </div>
+    <div class="card">
+      <h2>Version</h2>
+      <div class="stat-value" style="font-size:28px" id="version">—</div>
+      <div class="stat-label">JARVIS</div>
+    </div>
+  </div>
+
+  <!-- Pending pairing requests -->
+  <div class="section-header"><h2>🔐 Pending Pairing Requests</h2></div>
+  <div id="pairing-list"><div class="empty">No pending requests</div></div>
+
+  <!-- Active sessions -->
+  <div class="section-header"><h2>💬 Active Sessions</h2></div>
+  <div class="card">
+    <table>
+      <thead><tr><th>Session</th><th>Channel</th><th>Last Active</th></tr></thead>
+      <tbody id="sessions-table">
+        <tr><td colspan="3" class="empty">No sessions yet</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Quick actions -->
+  <div class="section-header"><h2>⚡ Quick Actions</h2></div>
+  <div class="grid">
+    <div class="card">
+      <h2>Send Command</h2>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <input id="cmd-input" type="text" placeholder="e.g. take a screenshot" style="flex:1;background:#242424;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;font-size:13px;outline:none">
+        <button class="refresh-btn" onclick="sendCommand()" style="color:var(--accent);border-color:var(--accent)">Send</button>
+      </div>
+      <div id="cmd-result" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
+    </div>
+    <div class="card">
+      <h2>Security Audit</h2>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Run full security check on all configurations.</p>
+      <button class="refresh-btn" onclick="window.location='/api/status'" style="width:100%">View Status JSON</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const TOKEN = new URLSearchParams(window.location.search).get('token') || '';
+const API = (path) => path + (TOKEN ? `?token=${TOKEN}` : '');
+
+async function fetchStatus() {
+  try {
+    const res = await fetch(API('/api/status'));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+function refreshAll() {
+  fetchStatus().then(data => {
+    if (!data) {
+      document.getElementById('agent-status').innerHTML = '<span class="badge offline">Offline</span>';
+      return;
+    }
+    document.getElementById('agent-status').innerHTML =
+      data.agent_available
+        ? '<span class="badge online">✓ Online</span>'
+        : '<span class="badge offline">✗ Offline</span>';
+    document.getElementById('session-count').textContent = data.sessions ?? '—';
+    document.getElementById('uptime').textContent = data.uptime ?? '—';
+    document.getElementById('version').textContent = data.version ?? '—';
+    document.getElementById('last-refresh').textContent =
+      'Updated ' + new Date().toLocaleTimeString();
+  });
+}
+
+async function sendCommand() {
+  const msg = document.getElementById('cmd-input').value.trim();
+  if (!msg) return;
+  document.getElementById('cmd-result').textContent = 'Sending...';
+  try {
+    const res = await fetch(API('/api/message'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg, sender_id: 'dashboard' }),
+    });
+    const data = await res.json();
+    document.getElementById('cmd-result').textContent =
+      data.response ? ('JARVIS: ' + data.response.substring(0, 200)) : 'No response';
+  } catch (e) {
+    document.getElementById('cmd-result').textContent = 'Error: ' + e.message;
+  }
+}
+
+// Auto-refresh every 30s
+refreshAll();
+setInterval(refreshAll, 30000);
+</script>
+</body>
+</html>

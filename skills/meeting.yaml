@@ -1,0 +1,43 @@
+name: meeting
+description: Prepare for a meeting — mute notifications, set focus mode, open calendar
+trigger_phrases:
+  - start meeting
+  - I have a meeting
+  - join meeting
+  - meeting mode on
+  - prepare for meeting
+
+steps:
+  - tool: system_notify
+    args: {title: "JARVIS", message: "Meeting mode activated. Notifications muted."}
+
+  - tool: system_run
+    description: "Mute system audio (Windows)"
+    args: {command: "powershell -c \"(New-Object -COM WScript.Shell).SendKeys([char]173)\""}
+
+  - tool: phone_notify
+    args:
+      title: "JARVIS"
+      message: "Meeting mode on — notifications silenced"
+
+  - tool: system_open
+    description: "Open calendar app"
+    args: {target: "calendar"}
+
+  - respond: |
+      Meeting mode activated! ✅
+      • PC audio muted
+      • Phone notifications silenced
+      • Calendar opened
+
+      Say "end meeting" when you're done.
+
+  - on_trigger: "end meeting|meeting over|meeting ended"
+    steps:
+      - tool: system_run
+        args: {command: "powershell -c \"(New-Object -COM WScript.Shell).SendKeys([char]173)\""}
+      - respond: "Meeting ended. Audio restored. Have a great rest of your day! 🎉"
+
+metadata:
+  phase: 9
+  category: productivity

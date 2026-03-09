@@ -1,0 +1,39 @@
+name: summary
+description: Summarize a webpage, file, or conversation using Gemini
+trigger_phrases:
+  - summarize this
+  - summarize the page
+  - summarize this file
+  - give me a summary
+  - tldr
+  - TL;DR
+  - what is this about
+  - summarize the conversation
+
+steps:
+  - detect_intent:
+      webpage:
+        triggers: ["page", "url", "website", "article", "link"]
+        tool: web_search
+        post_process: summarize_with_llm
+
+      file:
+        triggers: ["file", "document", "txt", "pdf", "log"]
+        tool: file_read
+        post_process: summarize_with_llm
+
+      conversation:
+        triggers: ["conversation", "chat", "session", "what we discussed"]
+        action: summarize_session_history
+
+  - respond: |
+      {summary_result}
+
+      Want me to save this summary? Say "save this summary" and I'll write it to a file.
+
+metadata:
+  phase: 9
+  category: productivity
+  requires:
+    - src.llm
+    - src.agent_loop

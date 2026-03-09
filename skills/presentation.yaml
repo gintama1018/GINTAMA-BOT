@@ -1,0 +1,43 @@
+name: presentation
+description: Set up screen for presentation — close distractions, enable focus, clean desktop
+trigger_phrases:
+  - presentation mode
+  - start presentation
+  - I'm presenting
+  - screen share mode
+  - present my screen
+  - preparing to present
+
+steps:
+  - tool: system_notify
+    args: {title: "JARVIS", message: "Presentation mode started"}
+
+  - tool: system_run
+    description: "Close notification center / focus assist (Windows)"
+    args: {command: "powershell -c \"Start-Process ms-settings:quiethours\""}
+
+  - tool: phone_notify
+    args:
+      title: "JARVIS"
+      message: "📊 You are now presenting. Good luck!"
+
+  - respond: |
+      Presentation mode ON! 🎯
+
+      Recommended checklist:
+      ✅ Notifications: silenced
+      ✅ Phone: notified
+      📋 Manual steps (I'll remind you):
+        • Close email/chat apps
+        • Sign out of personal accounts on screen
+        • Set browser to presentation profile
+
+      Say "end presentation" when you're done.
+
+  - on_trigger: "end presentation|presentation over|stop presenting"
+    steps:
+      - respond: "Presentation mode off. Welcome back! 🙂"
+
+metadata:
+  phase: 9
+  category: productivity

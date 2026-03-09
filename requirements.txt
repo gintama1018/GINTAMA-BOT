@@ -9,3 +9,29 @@ plyer
 waitress
 google-generativeai
 python-dotenv
+
+# ── Phase 2: Telegram ────────────────────────────
+python-telegram-bot>=20.0
+
+# ── Phase 4: Web UI / Gateway ────────────────────
+fastapi
+uvicorn[standard]
+python-multipart
+
+# ── Phase 5: Discord ─────────────────────────────
+discord.py>=2.0
+
+# ── Phase 6: Browser + Search ────────────────────
+playwright
+duckduckgo-search
+
+# ── Phase 6: Camera ──────────────────────────────
+opencv-python
+
+# ── Phase 7: Voice (optional — install as needed) ─
+# pip install faster-whisper        (recommended, faster)
+# pip install openai-whisper        (original)
+# pip install pyttsx3               (text-to-speech)
+# pip install sounddevice numpy     (microphone input)
+# pip install pyaudio               (fallback audio)
+
