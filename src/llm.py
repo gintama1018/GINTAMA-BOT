@@ -38,6 +38,18 @@ Available actions: info, screenshot, launch, open, lock, unlock, volume, brightn
                    push, pull, ls, run, notify, battery, reboot, shutdown, status
 
 Examples:
+Input: "open camera and take my selfie"
+Output: {"target":"system","action":"launch","args":{"app":"camera"}}
+
+Input: "take a selfie"
+Output: {"target":"system","action":"launch","args":{"app":"camera"}}
+
+Input: "take a photo"
+Output: {"target":"system","action":"launch","args":{"app":"camera"}}
+
+Input: "capture my screen"
+Output: {"target":"system","action":"screenshot","args":{}}
+
 Input: "take a screenshot of my phone"
 Output: {"target":"phone","action":"screenshot","args":{}}
 
@@ -68,6 +80,7 @@ Output: {"target":"system","action":"launch","args":{"app":"calculator"}}
 Input: "brightness 200 on phone"
 Output: {"target":"phone","action":"brightness","args":{"level":"200"}}
 
+If the input is a compound command with multiple actions, respond with the PRIMARY (first) action only.
 If the input cannot be mapped to any command, respond with:
 {"target":null,"action":null,"args":{}}
 """
@@ -180,8 +193,7 @@ class LLMAdapter:
                 text,
                 generation_config={
                     "temperature": 0,
-                    "max_output_tokens": 200,
-                    "response_mime_type": "application/json",
+                    "max_output_tokens": 400,
                 },
             )
             raw = response.text.strip()
