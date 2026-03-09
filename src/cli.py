@@ -63,6 +63,7 @@ class TCC_CLI:
         self.llm = LLMAdapter(self.config, self.logger)
         self.scheduler = Scheduler(self.config, self.logger, self._run_skill_by_name)
         self._project_root = project_root
+        self._skill_triggers: Optional[dict] = None  # BUG 5: cache
 
     # ---------------------------------------------------------------- #
     # Config loading                                                    #
@@ -159,6 +160,21 @@ class TCC_CLI:
 
         # Route to system executor or remote device
         start = time.perf_counter()
+
+        # S5: Require confirmation for the raw 'run' action (destructive)
+        if intent.action == "run":
+            cmd_preview = intent.args.get("cmd", intent.args.get("text", ""))
+            self.console.print(
+                f"[yellow]Execute [bold]{cmd_preview!r}[/bold] on [bold]{intent.target}[/bold]? [[bold]y[/bold]/N] [/yellow]",
+                end="",
+            )
+            try:
+                answer = input().strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = "n"
+            if answer != "y":
+                self.console.print("[dim]Cancelled.[/dim]")
+                return
 
         if intent.target == "system":
             result = self.executor.execute(intent)
@@ -261,10 +277,21 @@ class TCC_CLI:
         )
 
     def _cmd_logs(self, intent: Intent) -> None:
-        n = int(intent.flags.get("last", 50))
+        try:
+            n = int(intent.flags.get("last", 50))
+        except (ValueError, TypeError):
+            self.console.print("[yellow]Expected a number after --last, defaulting to 50.[/yellow]")
+            n = 50
         level_filter = intent.flags.get("level")
         device_filter = intent.flags.get("device")
-        entries = self.logger.get_recent(n=n, level_filter=level_filter, device_filter=device_filter)
+        since_hours_raw = intent.flags.get("since")
+        since_hours = None
+        if since_hours_raw and isinstance(since_hours_raw, str):
+            try:
+                since_hours = float(since_hours_raw.rstrip("h"))
+            except ValueError:
+                pass
+        entries = self.logger.get_recent(n=n, level_filter=level_filter, device_filter=device_filter, since_hours=since_hours)
         if not entries:
             self.console.print("[dim]No log entries found.[/dim]")
             return
@@ -309,21 +336,30 @@ class TCC_CLI:
     # ---------------------------------------------------------------- #
 
     def _build_skill_triggers(self) -> dict:
-        """Return {trigger_phrase: skill_name} mapping."""
+        """Return {trigger_phrase: skill_name} mapping (cached for session)."""
+        # BUG 5: Build once and cache — skills don't change while running
+        if self._skill_triggers is not None:
+            return self._skill_triggers
         import yaml
         triggers = {}
         skills_dir = os.path.join(self._project_root, "skills")
         try:
             for fname in os.listdir(skills_dir):
                 if fname.endswith(".yaml"):
-                    with open(os.path.join(skills_dir, fname), "r") as f:
-                        skill = yaml.safe_load(f)
-                    skill_name = skill.get("name", fname.replace(".yaml", ""))
-                    for phrase in skill.get("trigger", []):
-                        triggers[phrase.lower()] = skill_name
-        except Exception:
+                    try:
+                        with open(os.path.join(skills_dir, fname), "r") as f:
+                            skill = yaml.safe_load(f)
+                        skill_name = skill.get("name", fname.replace(".yaml", ""))
+                        for phrase in skill.get("trigger", []):
+                            triggers[phrase.lower()] = skill_name
+                    except Exception as e:
+                        # Q5: Warn on bad YAML so user knows why a skill isn't triggering
+                        self.logger.warning(f"Could not load skill '{fname}': {e}")
+                        self.console.print(f"[yellow]⚠ Skill '{fname}' has a YAML error: {e}[/yellow]")
+        except FileNotFoundError:
             pass
-        return triggers
+        self._skill_triggers = triggers
+        return self._skill_triggers
 
     def _run_skill(self, skill_name: str) -> None:
         import yaml

@@ -52,7 +52,8 @@ class SystemModule:
 
         cpu = psutil.cpu_percent(interval=0.5)
         mem = psutil.virtual_memory()
-        disk = psutil.disk_usage("/")
+        disk_root = "C:\\" if self.os_type == "windows" else "/"
+        disk = psutil.disk_usage(disk_root)
 
         data = {
             "hostname": socket.gethostname(),

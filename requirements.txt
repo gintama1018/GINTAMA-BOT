@@ -6,3 +6,5 @@ psutil
 pyyaml
 mss
 plyer
+waitress
+google-generativeai

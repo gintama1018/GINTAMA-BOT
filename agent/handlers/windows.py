@@ -8,6 +8,7 @@ No ADB — it calls OS-native Windows APIs and PowerShell.
 import os
 import platform
 import shlex
+import shutil
 import socket
 import subprocess
 from datetime import datetime
@@ -45,7 +46,9 @@ class WindowsHandler:
         if HAS_PSUTIL:
             cpu = psutil.cpu_percent(interval=0.5)
             mem = psutil.virtual_memory()
-            disk = psutil.disk_usage("/")
+            # BUG 4: Windows doesn't have "/" — use C:\\
+            disk_root = "C:\\" if platform.system().lower() == "windows" else "/"
+            disk = psutil.disk_usage(disk_root)
             data.update({
                 "cpu_percent": cpu,
                 "memory_percent": mem.percent,
@@ -200,9 +203,46 @@ class WindowsHandler:
     # ---------------------------------------------------------------- #
 
     def reboot(self, args: dict) -> dict:
-        subprocess.run(["shutdown", "/r", "/t", "10"], shell=False)
+        result = subprocess.run(["shutdown", "/r", "/t", "10"], shell=False, capture_output=True)
+        if result.returncode != 0:
+            return {"status": "error", "error": result.stderr.decode(errors="replace").strip() or "reboot failed"}
         return {"status": "success", "message": "Rebooting in 10 seconds", "data": {}}
 
     def shutdown(self, args: dict) -> dict:
-        subprocess.run(["shutdown", "/s", "/t", "10"], shell=False)
+        result = subprocess.run(["shutdown", "/s", "/t", "10"], shell=False, capture_output=True)
+        if result.returncode != 0:
+            return {"status": "error", "error": result.stderr.decode(errors="replace").strip() or "shutdown failed"}
         return {"status": "success", "message": "Shutting down in 10 seconds", "data": {}}
+
+    # ---------------------------------------------------------------- #
+    # push / pull (BUG 1)                                              #
+    # ---------------------------------------------------------------- #
+
+    def push(self, args: dict) -> dict:
+        """Copy a file from TCC host to this device (local copy)."""
+        src = args.get("src", "").strip()
+        dst = args.get("dst", "").strip()
+        if not src or not dst:
+            return {"status": "error", "error": "Usage: push <src> <dst>"}
+        # Security: normalise + restrict to legal paths
+        src_abs = os.path.realpath(src)
+        dst_abs = os.path.realpath(dst)
+        if not os.path.exists(src_abs):
+            return {"status": "error", "error": f"Source not found: {src}"}
+        try:
+            if os.path.isdir(dst_abs):
+                dst_abs = os.path.join(dst_abs, os.path.basename(src_abs))
+            os.makedirs(os.path.dirname(dst_abs) or ".", exist_ok=True)
+            shutil.copy2(src_abs, dst_abs)
+            size_kb = os.path.getsize(dst_abs) // 1024
+            return {
+                "status": "success",
+                "message": f"Copied {src} → {dst_abs} ({size_kb}KB)",
+                "data": {"dst": dst_abs, "size_kb": size_kb},
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
+    def pull(self, args: dict) -> dict:
+        """Copy a file from this device to TCC host (local copy)."""
+        return self.push(args)  # Semantically identical for local-to-local

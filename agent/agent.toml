@@ -8,7 +8,7 @@
 device_name   = "my-device"           # Human-readable name
 device_type   = "windows"             # windows | linux | android | darwin
 listen_port   = 7070
-listen_host   = "0.0.0.0"            # Change to Tailscale IP for security
+listen_host   = "127.0.0.1"           # Safe default. Change to Tailscale IP (100.x.x.x) for remote TCC access.
 log_level     = "INFO"
 
 # IMPORTANT: Change this to a strong random secret.

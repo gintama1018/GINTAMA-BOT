@@ -41,15 +41,27 @@ transport   = "lan"               # lan | tailscale | adb
 #transport   = "tailscale"
 
 # ============================================================
-# LOCAL LLM — optional natural language mode via Ollama
+# LLM — Natural language mode
 # ============================================================
 
 [llm]
-enabled              = false           # set true after: ollama pull mistral
+enabled              = true
+
+# Active backend: "gemini" (cloud, free tier) | "ollama" (local, offline)
+# Switch to "ollama" once you have Ollama installed and a model pulled.
+backend              = "gemini"
+
+# ---- Gemini settings ----------------------------------------
+# Get your free API key at: https://aistudio.google.com/apikey
+# Option 1 (recommended): set env var  GEMINI_API_KEY=your_key_here
+# Option 2: paste the key directly below (never commit to public git)
+gemini_api_key       = ""             # or set GEMINI_API_KEY env var
+gemini_model         = "gemini-2.0-flash"   # fast + free tier
+
+# ---- Ollama settings (for when you switch to local) ---------
 host                 = "http://localhost:11434"
 model                = "mistral"       # or "llama3", "phi3", etc.
 timeout              = 30
-confidence_threshold = 0.85
 
 # ============================================================
 # SCHEDULER — run skills on a schedule (optional)

@@ -56,9 +56,12 @@ class StructuredLogger:
         """Write one structured command-execution log entry."""
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         level = "ERROR" if status == "error" else "INFO"
-        line = f"[{ts}] {level:<5}  {command:<35} {status:<10} {latency:>5}ms"
+        # S6: Sanitize command string to prevent log injection via crafted newlines
+        safe_cmd = command.replace("\n", "\\n").replace("\r", "\\r")[:200]
+        line = f"[{ts}] {level:<5}  {safe_cmd:<35} {status:<10} {latency:>5}ms"
         if error:
-            line += f"  ERR: {error}"
+            safe_err = str(error).replace("\n", "\\n")[:200]
+            line += f"  ERR: {safe_err}"
         getattr(self._logger, level.lower())(line)
 
         # High-latency alert
@@ -91,6 +94,12 @@ class StructuredLogger:
         except FileNotFoundError:
             return []
 
+        cutoff_ts = None
+        if since_hours is not None:
+            from datetime import timedelta
+            cutoff = datetime.now() - timedelta(hours=since_hours)
+            cutoff_ts = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+
         results = []
         for line in lines:
             line = line.rstrip()
@@ -100,6 +109,14 @@ class StructuredLogger:
                 continue
             if device_filter and device_filter.lower() not in line.lower():
                 continue
+            # BUG 7: since_hours filter — parse timestamp from log line
+            if cutoff_ts and line.startswith("["):
+                try:
+                    line_ts = line[1:20]  # extract "YYYY-MM-DD HH:MM:SS"
+                    if line_ts < cutoff_ts:
+                        continue
+                except Exception:
+                    pass
             results.append(line)
 
         return results[-n:]

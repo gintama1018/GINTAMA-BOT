@@ -38,7 +38,10 @@ class DeviceDiscovery:
         return dict(self._cache)
 
     def count_online(self) -> int:
-        return sum(1 for d in self._cache.values() if d.get("status") == "online")
+        return sum(
+            1 for d in self._cache.values()
+            if d.get("status") in ("online", "no-ip (adb mode)")
+        )
 
     def get_device(self, name: str) -> dict:
         return self._cache.get(name, {})

@@ -1,0 +1,960 @@
+================================================================================
+  GINTAMA-BOT — FULL CODE AUDIT REPORT
+  TCC Terminal Command Center | Codename: JARVIS v2.0
+  Audit Date: March 2026
+  Auditor: Senior Code Review
+================================================================================
+
+  Files reviewed: 22 Python files, 4 YAML skills, 3 TOML configs
+  Total lines of code: ~2,400
+  Verdict: Solid foundation. Real bugs present. Security gaps present.
+           Missing features from reference repo identified below.
+
+
+================================================================================
+PART 1 — REAL BUGS (things that will crash or fail silently)
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+BUG 1 — push and pull are completely missing from WindowsHandler and LinuxHandler
+File: agent/handlers/windows.py  |  agent/handlers/linux.py
+Severity: HIGH — commands silently fail
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  You type:   laptop push ./report.pdf /home/user/docs/
+  The agent receives the command, looks for a method called "push"
+  on the WindowsHandler or LinuxHandler class, finds nothing,
+  and returns: "Action 'push' is not implemented on windows"
+
+  The user sees a red ✗ in the terminal.
+
+WHY THIS IS A PROBLEM:
+  "push" and "pull" are listed in the README as core features.
+  They're in the allowed_actions list in agent.toml.
+  They're in the command grammar. But the two most-used OS handlers
+  don't have them. Only phone.py (ADB module) has them.
+
+  The Android handler (Termux mode) also does not have push/pull
+  implemented — only the ADB phone module has it.
+
+WHAT'S NEEDED:
+  Both WindowsHandler and LinuxHandler need push() and pull() methods
+  that use Python's shutil.copy2() to move files locally, and have a
+  proper path validation step before writing anything.
+
+
+────────────────────────────────────────────────────────────────────────────────
+BUG 2 — reboot and shutdown always return "success" even when they fail
+File: agent/handlers/windows.py  |  agent/handlers/linux.py
+Severity: HIGH — false success reported to user
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  The reboot() and shutdown() methods call subprocess.run() but
+  never check the return code. The function immediately returns
+  {"status": "success"} regardless of whether the OS command
+  actually worked.
+
+  Example in windows.py:
+    subprocess.run(["shutdown", "/r", "/t", "10"], shell=False)
+    return {"status": "success", "message": "Rebooting in 10 seconds"}
+
+  If the user doesn't have permission to reboot, or the command
+  isn't found, the terminal shows green ✓ but nothing happens.
+  No error is ever reported.
+
+WHY THIS IS A PROBLEM:
+  These are destructive operations. The user trusts the ✓ feedback.
+  If you're doing a remote reboot and it silently fails, you have no
+  idea the machine is still running.
+
+WHAT'S NEEDED:
+  Capture return code. If non-zero, return error with stderr content.
+
+
+────────────────────────────────────────────────────────────────────────────────
+BUG 3 — logs --last crashes if value is not a valid integer
+File: src/cli.py — _cmd_logs()
+Severity: MEDIUM — unhandled ValueError crashes the command
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  User types:  logs --last abc
+  Code runs:   n = int(intent.flags.get("last", 50))
+  Python raises ValueError because "abc" cannot be cast to int.
+  The exception bubbles up to the REPL loop which catches it and
+  prints "Internal error: invalid literal for int()..." in red.
+
+  Same thing happens if user types:  logs --last
+  (flag exists but has True as value, not a string number)
+
+WHAT'S NEEDED:
+  Wrap in try/except ValueError with a fallback to the default (50).
+  Optionally print a helpful message like "Expected a number after --last"
+
+
+────────────────────────────────────────────────────────────────────────────────
+BUG 4 — disk_usage("/") crashes on Windows
+File: modules/system.py — info()
+Severity: HIGH on Windows — unhandled exception
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  The code always does:  disk = psutil.disk_usage("/")
+  On Linux and macOS "/" is the root. Works fine.
+  On Windows, "/" is not a valid path. psutil raises FileNotFoundError.
+  The info() function crashes with an unhandled exception,
+  and the terminal shows "Internal error: [WinError 3] The system
+  cannot find the path specified: '/'"
+
+  This is one of the most-used commands. Typing "system info"
+  on Windows would always fail.
+
+WHAT'S NEEDED:
+  import platform at top (already imported), then:
+  disk_root = "C:\\" if os_type == "windows" else "/"
+  disk = psutil.disk_usage(disk_root)
+
+
+────────────────────────────────────────────────────────────────────────────────
+BUG 5 — _build_skill_triggers() reads every YAML file from disk
+         on every single command the user types
+File: src/cli.py
+Severity: MEDIUM — performance issue + unnecessary I/O
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  Every time the user presses Enter, _execute_command() is called.
+  The first thing it does is call _build_skill_triggers() which:
+    1. Opens the skills/ directory
+    2. Iterates every .yaml file
+    3. Opens and parses each one with yaml.safe_load()
+    4. Builds a dictionary of {phrase: skill_name}
+    5. Returns it and throws it away
+
+  If you have 4 skill files and type 100 commands in a session,
+  that's 400 file reads and 400 YAML parses for no reason.
+  Skills don't change while the program is running.
+
+WHAT'S NEEDED:
+  Cache the result in self._skill_triggers on first call.
+  Return the cached version on all subsequent calls.
+  Only rebuild if the user explicitly runs a "skills reload" command.
+
+
+────────────────────────────────────────────────────────────────────────────────
+BUG 6 — count_online() returns 0 for ADB-mode devices
+File: src/discovery.py
+Severity: MEDIUM — banner always shows wrong device count
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  When a device has no IP (ADB mode), discovery sets its status to:
+  "no-ip (adb mode)"
+
+  But count_online() only counts devices with status == "online":
+    return sum(1 for d in self._cache.values() if d.get("status") == "online")
+
+  ADB devices never match "online" so they're never counted.
+  The startup banner says "0 device(s) online" even when your
+  phone is plugged in via USB and fully working.
+
+WHAT'S NEEDED:
+  Count both "online" AND "no-ip (adb mode)" as online.
+  "adb" status in cli.py's device table is also treated as online
+  visually — the count should reflect the same logic.
+
+
+────────────────────────────────────────────────────────────────────────────────
+BUG 7 — since_hours parameter in get_recent() is accepted but never used
+File: src/logger.py
+Severity: LOW — dead parameter, misleading API
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  The get_recent() method signature includes:
+    since_hours: Optional[float] = None
+
+  But the function body never reads this parameter.
+  Any call that passes since_hours= gets silently ignored.
+  No filtering by time is performed.
+
+WHAT'S NEEDED:
+  Either implement timestamp-based filtering, or remove the parameter.
+  The roadmap mentions "logs --since 1h" as a user command.
+  This should be wired up through the CLI flags handler too.
+
+
+────────────────────────────────────────────────────────────────────────────────
+BUG 8 — pyproject.toml uses a deprecated setuptools build backend
+File: pyproject.toml
+Severity: LOW — build/install will work but generates warnings
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  build-backend = "setuptools.backends.legacy:build"
+
+  This is not a valid setuptools backend string. The correct one is:
+  build-backend = "setuptools.build_meta"
+
+  Running "pip install -e ." or building a wheel will produce:
+  "WARNING: The legacy build system is deprecated..."
+  and may fail outright on newer pip versions.
+
+
+────────────────────────────────────────────────────────────────────────────────
+BUG 9 — APP_PACKAGES in android.py (Termux handler) is missing 11 packages
+         that exist in modules/phone.py (ADB handler)
+File: agent/handlers/android.py
+Severity: LOW — inconsistent behavior between agent mode and ADB mode
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  When phone is controlled via ADB, modules/phone.py handles launch().
+  It has 22 app → package mappings including:
+    twitter, photos, files, clock, contacts, messages, phone, play,
+    drive, netflix, calculator
+
+  When phone runs a Termux agent, agent/handlers/android.py handles it.
+  It only has 11 mappings — all those apps above are missing.
+
+  So "phone launch netflix" works over ADB but fails with
+  "Could not launch 'netflix'" over Termux agent mode.
+  Same user, same phone, same command — different results.
+
+WHAT'S NEEDED:
+  Extract APP_PACKAGES into a shared constant (e.g. modules/constants.py)
+  and import it in both places. Single source of truth.
+
+
+================================================================================
+PART 2 — SECURITY ISSUES
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+SECURITY 1 — Agent binds to 0.0.0.0 by default (exposed to entire network)
+File: agent/agent.toml
+Severity: CRITICAL
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  listen_host = "0.0.0.0" means the agent listens on EVERY network
+  interface — your home Wi-Fi, ethernet, VPN, everything.
+
+  Anyone on the same Wi-Fi network as the target device can reach
+  port 7070 and attempt commands. In a cafe, university, or shared
+  office — that's hundreds of people.
+
+  The config says "Change to Tailscale IP for security" as a comment.
+  But the default should be the SAFE option. Security defaults must be
+  restrictive, not permissive. Nobody reads comments until after they
+  get compromised.
+
+REAL ATTACK SCENARIO:
+  1. User installs JARVIS on their laptop at a university
+  2. Laptop is on university Wi-Fi
+  3. Agent binds to 0.0.0.0:7070
+  4. Any student with a port scanner finds it
+  5. Sends POST /command with a guessed or brute-forced token
+  6. Gets access to screenshot, file listing, and potentially more
+
+WHAT'S NEEDED:
+  Default listen_host = "127.0.0.1"
+  Document: "Change to your Tailscale IP (100.x.x.x) to allow remote TCC connections"
+  Add startup error if token is still "CHANGE_ME_strong_secret_token_here"
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECURITY 2 — Empty auth token silently enables unauthenticated access
+File: agent/agent.py — require_auth decorator
+Severity: CRITICAL
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  The auth decorator does this:
+    if not AUTH_TOKEN:
+        return f(*args, **kwargs)  # No token configured — dev mode
+
+  If auth_token is empty or missing in agent.toml, the agent accepts
+  ALL requests from ANYONE with NO authentication check.
+
+  This is labeled "dev mode" but there is no visible warning when the
+  agent starts in this state. The startup message just says:
+    Auth : NONE (dev mode)
+
+  But most users won't notice a line in a wall of startup text.
+
+REAL SCENARIO:
+  User forgets to set auth_token, runs agent.
+  Anyone who can reach port 7070 has full agent access.
+  No token required. No error. No alert.
+
+WHAT'S NEEDED:
+  On startup, if AUTH_TOKEN is empty:
+  - Print a loud multi-line WARNING
+  - Refuse to bind to anything except 127.0.0.1
+  - Optionally exit with an error unless --allow-no-auth flag is passed
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECURITY 3 — Agent uses HTTP, not HTTPS — tokens travel in plaintext
+File: src/router.py, agent/agent.py
+Severity: HIGH
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  All communication between TCC client and agents is:
+    http://{ip}:{port}/command
+
+  The auth token is sent in every request:
+    "Authorization": f"Bearer {auth_token}"
+
+  Over plain HTTP, this token is transmitted in cleartext.
+  On a local network, any device doing passive packet capture
+  (even without ARP spoofing) can read it.
+
+  Once the token is captured, the attacker has permanent agent access
+  because tokens don't rotate and there's no session concept.
+
+WHY TAILSCALE DOESN'T FULLY SOLVE THIS:
+  Tailscale encrypts traffic between peers. But if the agent is bound
+  to 0.0.0.0 (Bug 1), traffic can also arrive over the LAN interface
+  where it is NOT encrypted.
+
+WHAT'S NEEDED:
+  Option 1 (simple): Bind only to Tailscale IP. Tailscale encrypts.
+  Option 2 (proper): Use HTTPS with self-signed cert generated on first run.
+  Option 3 (good enough): At minimum, hash the token with HMAC per-request
+                           so replaying a captured auth header doesn't work.
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECURITY 4 — No rate limiting on agent endpoints
+File: agent/agent.py
+Severity: HIGH — enables token brute force
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  The /command endpoint has no rate limiting.
+  An attacker who can reach the agent can try unlimited tokens per second.
+
+  A 32-character hex token (recommended) is computationally unbrute-forceable.
+  But the default token in the config is:
+    "CHANGE_ME_strong_secret_token_here"
+
+  If any user leaves this as-is (which happens), an attacker only needs
+  to try a handful of obvious defaults. No lockout. No delay. No alarm.
+
+WHAT'S NEEDED:
+  At startup: reject if token matches the default placeholder exactly.
+  Simple rate limit: track failed auth attempts per IP.
+  After 5 failures in 60 seconds, block that IP for 5 minutes.
+  Log all auth failures with timestamps and source IPs.
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECURITY 5 — phone.py run() passes user commands through shlex
+             but still gives full phone shell access
+File: modules/phone.py — run()
+Severity: HIGH — intended but dangerous feature with no guardrails
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  The run() action lets you execute arbitrary shell commands on the phone:
+    phone run "rm -rf /sdcard/"
+    phone run "cat /sdcard/WhatsApp/Databases/msgstore.db"
+
+  shlex.split() does prevent shell injection (no &&, ;, | etc.),
+  but it doesn't prevent dangerous commands themselves.
+
+  In the agent permission system, "run" is in denied_actions by default.
+  But in the ADB mode (router.py → phone.py), there is NO permission check.
+  The PhoneModule.run() method is called directly with no ACL.
+
+REAL SCENARIO:
+  User types: phone run "rm -rf /sdcard/DCIM"
+  No confirmation. No warning. Immediately executes.
+  All photos deleted.
+
+WHAT'S NEEDED:
+  Add a confirmation prompt for "run" on any target:
+  "Execute 'rm -rf /sdcard/DCIM' on phone? [y/N]"
+  And/or add a local ACL for ADB mode mirroring the agent permission system.
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECURITY 6 — Log injection via crafted command strings
+File: src/logger.py — log_command()
+Severity: LOW-MEDIUM — can pollute or forge log entries
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  Log entries are built by string concatenation:
+    line = f"[{ts}] {level:<5}  {command:<35} {status:<10} {latency:>5}ms"
+
+  If a user types a command containing newlines (\n) or log-format
+  strings like "[2026-03-09 12:00:00] ERROR  laptop run", those
+  characters go directly into the log file uncleaned.
+
+  Result: a malicious command string can inject fake log entries.
+
+  Example:
+    Type: phone battery\n[2026-03-09 12:00:00] ERROR  system shutdown success
+    The log file now contains a fake ERROR entry for a shutdown that never happened.
+
+WHAT'S NEEDED:
+  Sanitize the command string before logging:
+    command_clean = repr(command) or command.replace("\n", "\\n").replace("\r", "\\r")
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECURITY 7 — Skill path traversal not sanitized (in original code)
+File: src/cli.py — _run_skill()
+Severity: MEDIUM — can read arbitrary YAML files if misconfigured
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  The original _run_skill() builds the path like this:
+    skill_file = os.path.join(skills_dir, f"{skill_name}.yaml")
+
+  skill_name comes from a YAML file's "trigger" list.
+  If a maliciously crafted skill YAML has a step that triggers
+  another skill named "../../config", the path becomes:
+    skills_dir/../../config.yaml
+
+  This could load config.toml-adjacent files as if they were skills,
+  exposing the auth token via the steps list rendering.
+
+WHAT'S NEEDED:
+  os.path.basename(skill_name) to strip any path components.
+  Validate the resulting path stays inside the skills/ directory.
+  This fix was already applied in the corrected version.
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECURITY 8 — Flask runs in development mode (not production-safe)
+File: agent/agent.py — start_agent()
+Severity: MEDIUM — development server not designed for real traffic
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  app.run(host=LISTEN_HOST, port=LISTEN_PORT, debug=False, use_reloader=False)
+
+  debug=False is correct — good.
+  But Flask's built-in server (Werkzeug) is explicitly documented as
+  NOT suitable for production. It is single-threaded by default, which means:
+
+  1. Only ONE request can be processed at a time.
+  2. A slow command (e.g. screenshot taking 2 seconds) blocks ALL others.
+  3. If TCC sends a broadcast to 3 devices, and one agent is slow,
+     the others wait in queue.
+
+WHAT'S NEEDED:
+  Use a production WSGI server. Options that are free and lightweight:
+    - waitress (pip install waitress) — pure Python, works on Windows too
+    - gunicorn (Linux/macOS only)
+
+  Replace app.run() with:
+    from waitress import serve
+    serve(app, host=LISTEN_HOST, port=LISTEN_PORT, threads=4)
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECURITY 9 — Auth tokens stored in plaintext config files with no permissions check
+File: config.toml, agent/agent.toml
+Severity: MEDIUM
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT HAPPENS:
+  Both config files store the auth token in plain readable text.
+  On Linux/macOS these files default to 644 (world-readable) unless
+  the user manually sets 600. On Windows, permissions are rarely set.
+
+  If the machine is compromised, shared, or the repo is accidentally
+  pushed to GitHub (happens constantly), the token is exposed.
+
+WHAT'S NEEDED:
+  On startup, check config.toml and agent.toml file permissions.
+  On Linux/macOS: warn if permissions are more permissive than 600.
+  Alternatively: support reading token from environment variable:
+    auth_token = env:TCC_AUTH_TOKEN
+  So the token never lives in a file at all.
+
+
+================================================================================
+PART 3 — MISSING FEATURES FROM REFERENCE REPO (moltworker / OpenClaw)
+================================================================================
+
+  The repo you referenced (cloudflare/moltworker) runs OpenClaw, which is a
+  personal AI assistant with a gateway architecture. You said you want all
+  its features but built locally for free, with no paid cloud services.
+
+  Below is every significant feature OpenClaw has, what it costs in their
+  version, and how to build it locally for $0.
+
+
+────────────────────────────────────────────────────────────────────────────────
+MISSING FEATURE 1 — Multi-channel support (Telegram, Discord, Slack)
+Reference: moltworker README, Optional Chat Channels section
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT OPENCLAW HAS:
+  You can DM the bot on Telegram, Discord, or Slack and it executes
+  commands. Your phone messages the bot, the bot executes on your PC.
+
+CURRENT STATE IN GINTAMA-BOT:
+  Only the local terminal. No chat platform integration at all.
+  If you're away from your PC, you can only use TCC via Tailscale SSH.
+
+HOW TO BUILD IT FOR FREE:
+  Telegram Bot API is completely free. You create a bot with @BotFather,
+  get a token, and poll the Telegram API for messages.
+
+  Architecture:
+    Your Telegram DM → Telegram Bot API (free) → TCC bridge service
+    → TCC command parser → device execution → result back to Telegram DM
+
+  Implementation:
+    - Python-telegram-bot library (free, open source)
+    - Run a small bridge process alongside TCC that:
+      a) Polls Telegram for new messages from YOUR user ID only
+      b) Passes message text to TCC parser
+      c) Returns result back as a Telegram message
+
+  Security note: Only whitelist YOUR Telegram user_id in the config.
+  Reject all messages from any other sender. This is a personal tool.
+
+  Same pattern works for Discord (discord.py) and Slack (slack-sdk).
+  All free. All local. No cloud service.
+
+
+────────────────────────────────────────────────────────────────────────────────
+MISSING FEATURE 2 — Web-based Control UI
+Reference: moltworker — "Control UI" at gateway URL
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT OPENCLAW HAS:
+  A web chat interface accessible via browser. You open a URL,
+  type commands in a chat-style UI, see results. No terminal required.
+
+CURRENT STATE IN GINTAMA-BOT:
+  Terminal only. If you want to control your devices from a mobile
+  browser or a machine without TCC installed, you can't.
+
+HOW TO BUILD IT FOR FREE:
+  FastAPI + simple HTML/JS served locally. All free.
+
+  Architecture:
+    FastAPI server (runs alongside TCC main process)
+    → serves a single-page HTML/JS UI at http://localhost:8080
+    → accepts WebSocket connection from browser
+    → browser sends commands as text
+    → FastAPI passes to TCC router
+    → results stream back via WebSocket to browser
+
+  Accessible over Tailscale at http://100.x.x.x:8080
+  Protected by Tailscale ACLs — only your devices can reach it.
+  No need for Cloudflare Access (that's the paid part).
+
+  Tech stack: FastAPI, uvicorn, websockets — all pip installable, all free.
+
+
+────────────────────────────────────────────────────────────────────────────────
+MISSING FEATURE 3 — Device Pairing / Approval Flow
+Reference: moltworker — Device Pairing section
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT OPENCLAW HAS:
+  When a new device tries to connect, it enters a pending state.
+  An admin must approve it via the admin UI before it can send commands.
+  This prevents unauthorized devices from connecting even with a token.
+
+CURRENT STATE IN GINTAMA-BOT:
+  Token-only. If the token matches, you're in. There's no concept of
+  "this is a new device I haven't seen before, let me verify it."
+  Anyone who obtains the token from any source gets full access immediately.
+
+HOW TO BUILD IT FOR FREE:
+  Each device generates a unique device_id on first run (UUID).
+  Store known/approved device_ids in a local JSON file on the server.
+
+  Flow:
+    1. New device connects with token + device_id
+    2. If device_id not in approved list → status "pending", command rejected
+    3. Run "devices --pending" in TCC to see waiting devices
+    4. Run "devices --approve <device_id>" to approve
+    5. Device_id added to approved list → future commands accepted
+
+  No cloud. No admin panel needed. Just terminal commands.
+  Persistent across restarts using a simple JSON file.
+
+
+────────────────────────────────────────────────────────────────────────────────
+MISSING FEATURE 4 — Persistent Conversation History
+Reference: moltworker — "Persistent conversations" feature
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT OPENCLAW HAS:
+  The AI assistant remembers past conversations. Context carries over
+  across sessions. You can ask "what did I ask you yesterday?" and it knows.
+
+CURRENT STATE IN GINTAMA-BOT:
+  LLM conversation history is in-memory only. It resets to nothing
+  every time you restart TCC. The LLM has no memory of past sessions.
+
+HOW TO BUILD IT FOR FREE:
+  SQLite database (zero cost, built into Python) stores conversation history.
+
+  Schema:
+    sessions table: id, started_at, device_id
+    messages table: id, session_id, role (user/assistant), content, timestamp
+
+  On startup: load last N messages (e.g. last 20) as context for Ollama.
+  On each exchange: append to SQLite.
+  Memory stays local on your machine. Private. No cloud.
+
+  The LLM system prompt gets injected with recent history:
+  "Here are your last 5 exchanges:
+   [user] open youtube on phone
+   [assistant] launched com.google.android.youtube
+   ..."
+
+
+────────────────────────────────────────────────────────────────────────────────
+MISSING FEATURE 5 — Admin UI for Device Management
+Reference: moltworker — /_admin/ route with device management
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT OPENCLAW HAS:
+  A web admin panel where you:
+  - See all paired devices and their status
+  - Approve pending device connection requests
+  - Trigger manual backups
+  - Restart the gateway process
+  - View logs
+
+CURRENT STATE IN GINTAMA-BOT:
+  Everything is terminal-only. Devices command shows a table.
+  No approval flow. No backup trigger. No process management.
+
+HOW TO BUILD IT FOR FREE:
+  Same FastAPI server from Missing Feature 2.
+  Add an /_admin route protected by a separate admin token.
+  Render an HTML page with device list, approve buttons, log view.
+  All served locally. Accessible only via Tailscale mesh.
+
+
+────────────────────────────────────────────────────────────────────────────────
+MISSING FEATURE 6 — Backup and Restore (Persistent Storage)
+Reference: moltworker — Persistent Storage (R2) section
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT OPENCLAW HAS:
+  R2 cloud storage syncs all config, paired devices, and conversation history
+  every 5 minutes. If the container restarts, everything is restored.
+
+  In moltworker this uses paid Cloudflare R2 storage.
+
+HOW TO BUILD IT FOR FREE:
+  You don't need R2. You need the CONCEPT: automatic backup of state.
+
+  Local implementation:
+    - A background thread (already have scheduler.py!) that every 5 minutes
+      creates a backup of: config.toml, logs/tcc.log, paired_devices.json,
+      conversation_history.db
+    - Backup destination: a folder on a different device via rsync over Tailscale
+    - Or: a local backup dir with timestamped ZIP archives
+
+  "backup now" command triggers immediate backup.
+  "restore" command lists available backups and lets you pick one.
+  Zero cost. No cloud. Works offline.
+
+
+────────────────────────────────────────────────────────────────────────────────
+MISSING FEATURE 7 — WebSocket Support (real-time bidirectional communication)
+Reference: moltworker — wss:// WebSocket connection for control UI
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT OPENCLAW HAS:
+  Commands are sent and received over WebSocket — persistent bidirectional
+  connection. This allows:
+  - Streaming responses (see output as it's generated)
+  - Push notifications (server sends events to client unprompted)
+  - Low latency (no new HTTP connection per command)
+
+CURRENT STATE IN GINTAMA-BOT:
+  Pure HTTP request/response. Each command opens a new connection,
+  waits for response, closes. For long commands (file transfer, run),
+  the client just blocks waiting. No streaming. No push events.
+
+HOW TO BUILD IT FOR FREE:
+  In FastAPI, WebSocket support is built in (zero extra dependencies).
+  Replace the /command HTTP endpoint with a WebSocket endpoint on the agent.
+  TCC client connects once and keeps the connection open for the session.
+  Messages are JSON objects: same schema as current HTTP payloads.
+
+  Benefit: agent can push events to TCC without being asked.
+  Example: "phone battery dropped below 20%" → agent pushes notification
+  to any connected TCC client automatically.
+
+
+────────────────────────────────────────────────────────────────────────────────
+MISSING FEATURE 8 — Browser Automation / Remote Screenshot via URL
+Reference: moltworker — Browser Automation (CDP) section
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT OPENCLAW HAS:
+  Control a headless Chrome browser via CDP. Take screenshots of URLs.
+  Record videos of web pages. Automate web interactions.
+  Used with: screenshot.js, video.js, cdp-client.js
+
+CURRENT STATE IN GINTAMA-BOT:
+  Screenshot captures the current screen only (mss library).
+  No ability to screenshot a URL without opening a browser window.
+  No web automation at all.
+
+HOW TO BUILD IT FOR FREE:
+  Playwright (free, open source) or Selenium with headless Chrome.
+
+  New commands:
+    system screenshot-url https://google.com
+    → headless browser opens, captures page, saves PNG
+
+    system record-url https://youtube.com
+    → headless browser records 10 seconds of page as video
+
+  Implementation: playwright Python library.
+    pip install playwright
+    playwright install chromium   (installs headless Chrome, free)
+
+  Works locally with no cloud. No CDP shim needed. No Cloudflare.
+
+
+────────────────────────────────────────────────────────────────────────────────
+MISSING FEATURE 9 — Sleep/Wake Management for the Agent
+Reference: moltworker — SANDBOX_SLEEP_AFTER setting
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT OPENCLAW HAS:
+  The container can sleep after a configurable period of inactivity
+  to save compute costs. Wake happens on next request.
+
+CURRENT STATE IN GINTAMA-BOT:
+  Agent runs forever. No idle detection. No auto-sleep.
+  Not a huge issue for personal devices, but on a server or secondary
+  laptop you might want the agent to use minimal resources when idle.
+
+HOW TO BUILD IT FOR FREE:
+  Add idle_timeout_minutes to agent.toml.
+  Track last_command_time in the agent.
+  After timeout: reduce check interval, log "agent idle", optionally
+  send a notification to TCC that it's going into low-power mode.
+  On next command received: resume normally.
+
+
+────────────────────────────────────────────────────────────────────────────────
+MISSING FEATURE 10 — Voice Command Interface
+Reference: moltworker roadmap (planned), TCC roadmap Phase 8
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT OPENCLAW HAS:
+  Not yet in moltworker, but it's a common AI assistant feature
+  and is in the TCC roadmap as Phase 8.
+
+HOW TO BUILD IT FOR FREE:
+  Whisper.cpp — OpenAI's Whisper speech recognition model compiled to C++.
+  Runs fully offline on CPU. No API key. No cost.
+
+  pip install openai-whisper (Python version, slower but simpler)
+  Or: compile whisper.cpp for maximum speed.
+
+  Add a "voice" mode to TCC:
+    python main.py --voice
+    → records from microphone until silence
+    → transcribes with Whisper locally
+    → passes transcript to TCC parser as if typed
+    → result spoken back via pyttsx3 (free text-to-speech)
+
+  Full offline voice control. No Siri. No Google. No cloud.
+
+
+================================================================================
+PART 4 — CODE QUALITY ISSUES (not bugs, but need improvement)
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+QUALITY 1 — No input length validation anywhere
+────────────────────────────────────────────────────────────────────────────────
+
+  User can type an arbitrarily long command string.
+  App name, notify message, file paths — all unbounded.
+  A 10MB "message" in the notify field would be accepted and logged.
+
+  Add max length checks:
+  - Command string: 512 chars
+  - Notify message: 500 chars (also limits SMS/notification payloads)
+  - File paths: 260 chars (Windows MAX_PATH limit)
+  - App name: 100 chars
+
+
+────────────────────────────────────────────────────────────────────────────────
+QUALITY 2 — No startup validation of config.toml
+────────────────────────────────────────────────────────────────────────────────
+
+  TCC starts even if config.toml has:
+  - Invalid device type values
+  - Ports outside 1-65535
+  - Token still set to the placeholder value
+  - IP addresses that are syntactically invalid
+
+  The errors only appear later when you try to use a broken device.
+
+  Add a config validator that runs on startup:
+  - Required fields present
+  - Port is a valid integer in range
+  - IP is a valid IPv4 if transport != "adb"
+  - Token is not the placeholder default
+  - Device type is one of: android | windows | linux | darwin
+
+
+────────────────────────────────────────────────────────────────────────────────
+QUALITY 3 — Scheduler resolution is 30 seconds — jobs can drift by up to 30s
+File: src/scheduler.py — _loop()
+────────────────────────────────────────────────────────────────────────────────
+
+  The loop sleeps 30 seconds between checks.
+  A task scheduled for 07:00 might run at 07:00:29.
+  Over time this is fine, but it's sloppy.
+
+  Better: sleep until the next whole minute boundary:
+    now = datetime.now()
+    sleep_seconds = 60 - now.second
+    time.sleep(sleep_seconds)
+
+  Now the loop fires exactly at each minute mark. Drift is < 1 second.
+
+
+────────────────────────────────────────────────────────────────────────────────
+QUALITY 4 — No graceful shutdown — agent leaves port open on crash
+File: agent/agent.py
+────────────────────────────────────────────────────────────────────────────────
+
+  If the agent crashes (unhandled exception), or is killed with Ctrl+C,
+  the port may remain in TIME_WAIT state for 60-120 seconds.
+  Next restart attempt fails with "Address already in use".
+
+  Add:
+    app.run(..., use_reloader=False)  ← already done, good
+    Also add socket SO_REUSEADDR option before binding.
+    And catch KeyboardInterrupt in start_agent() to log clean shutdown.
+
+
+────────────────────────────────────────────────────────────────────────────────
+QUALITY 5 — _build_skill_triggers silently skips malformed YAML
+File: src/cli.py
+────────────────────────────────────────────────────────────────────────────────
+
+  The except block in _build_skill_triggers is bare:
+    except Exception:
+        pass
+
+  If a YAML file has a syntax error, the skill is silently skipped.
+  The user types "good morning", nothing happens, no error message.
+  They have no idea why the skill isn't triggering.
+
+  At minimum: log the exception at WARNING level.
+  Better: print a one-time warning on startup for each invalid skill file.
+
+
+────────────────────────────────────────────────────────────────────────────────
+QUALITY 6 — No version mismatch detection between TCC client and agents
+────────────────────────────────────────────────────────────────────────────────
+
+  Agent /health returns "version": "2.0".
+  TCC client never reads this version field.
+
+  If you update TCC client to v3.0 with new command schema but agents
+  are still running v2.0, commands may fail with cryptic errors.
+
+  Add version check: if agent major version != client major version,
+  print a warning: "Agent at 100.98.44.7 is v2.0, TCC is v3.0.
+  Update the agent: python main.py --agent"
+
+
+================================================================================
+PART 5 — SUMMARY TABLE
+================================================================================
+
+  CATEGORY        ID    SEVERITY   FILE(S)                        STATUS
+  ─────────────────────────────────────────────────────────────────────────────
+  Bug             1     HIGH       handlers/windows.py, linux.py  FIXED
+  Bug             2     HIGH       handlers/windows.py, linux.py  FIXED
+  Bug             3     MEDIUM     src/cli.py                     FIXED
+  Bug             4     HIGH       modules/system.py              FIXED
+  Bug             5     MEDIUM     src/cli.py                     FIXED
+  Bug             6     MEDIUM     src/discovery.py               FIXED
+  Bug             7     LOW        src/logger.py                  FIXED
+  Bug             8     LOW        pyproject.toml                 FIXED
+  Bug             9     LOW        agent/handlers/android.py      FIXED
+  Security        1     CRITICAL   agent/agent.toml               FIXED (warning added)
+  Security        2     CRITICAL   agent/agent.py                 FIXED (warning added)
+  Security        3     HIGH       router.py, agent.py            NEEDS HTTPS/waitress
+  Security        4     HIGH       agent/agent.py                 NEEDS RATE LIMITER
+  Security        5     HIGH       modules/phone.py               NEEDS CONFIRM PROMPT
+  Security        6     MEDIUM     src/logger.py                  NEEDS SANITIZER
+  Security        7     MEDIUM     src/cli.py                     FIXED
+  Security        8     MEDIUM     agent/agent.py                 NEEDS WAITRESS
+  Security        9     MEDIUM     config.toml, agent.toml        NEEDS ENV VAR SUPPORT
+  Missing Feat    1     —          NEW FILE NEEDED                Telegram/Discord bridge
+  Missing Feat    2     —          NEW FILE NEEDED                Web UI (FastAPI)
+  Missing Feat    3     —          src/discovery.py               Device pairing flow
+  Missing Feat    4     —          src/llm.py                     SQLite conversation history
+  Missing Feat    5     —          NEW FILE NEEDED                Admin UI
+  Missing Feat    6     —          src/scheduler.py               Local backup/restore
+  Missing Feat    7     —          agent/agent.py                 WebSocket transport
+  Missing Feat    8     —          modules/system.py              Browser automation
+  Missing Feat    9     —          agent/agent.toml               Idle/sleep management
+  Missing Feat    10    —          NEW FILE NEEDED                Voice interface (Whisper)
+  Quality         1     LOW        multiple                       Input length validation
+  Quality         2     LOW        src/cli.py                     Config validator on startup
+  Quality         3     LOW        src/scheduler.py               Scheduler drift fix
+  Quality         4     LOW        agent/agent.py                 Graceful shutdown
+  Quality         5     LOW        src/cli.py                     Skill YAML error reporting
+  Quality         6     LOW        src/router.py                  Version mismatch detection
+
+
+================================================================================
+PART 6 — RECOMMENDED NEXT BUILD ORDER
+================================================================================
+
+  Priority 1 — Fix remaining security gaps (2-3 days):
+    S3: Switch agent to waitress WSGI server
+    S4: Add rate limiting (simple dict-based, no extra deps)
+    S5: Add confirmation prompt for "run" action
+    S9: Support TCC_AUTH_TOKEN environment variable
+
+  Priority 2 — Telegram bridge (3-4 days):
+    Most impactful feature. Lets you control everything from your phone's
+    Telegram DM from anywhere. python-telegram-bot library. Zero cost.
+
+  Priority 3 — Web UI (3-4 days):
+    FastAPI + HTML. Accessible via Tailscale from any browser.
+    Makes the project demonstrable to anyone without a terminal.
+
+  Priority 4 — Persistent conversation history (1-2 days):
+    SQLite. Small change to llm.py. Big improvement in LLM usefulness.
+
+  Priority 5 — Device pairing flow (2-3 days):
+    JSON-based approved devices list. Adds real security without complexity.
+
+  Priority 6 — Voice interface (2-3 days):
+    Whisper.cpp or openai-whisper Python. Fully offline.
+    "Wow factor" feature for demos.
+
+
+================================================================================
+  END OF AUDIT REPORT
+  Bugs fixed: 9  |  Security improvements: 2 applied, 7 remaining
+  Missing features documented: 10  |  All buildable for $0
+================================================================================

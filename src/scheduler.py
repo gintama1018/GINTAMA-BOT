@@ -97,4 +97,7 @@ class Scheduler:
                         self.logger.error(
                             f"Scheduler: skill '{skill_name}' failed: {e}"
                         )
-            time.sleep(30)  # check every 30 seconds
+            # Q3: Sleep to the next whole-minute boundary — avoids drift
+            now = datetime.now()
+            sleep_secs = max(1, 60 - now.second - now.microsecond / 1_000_000)
+            time.sleep(sleep_secs)

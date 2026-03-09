@@ -8,6 +8,7 @@ Uses standard shell commands (shell=False always).
 import os
 import platform
 import shlex
+import shutil
 import socket
 import subprocess
 from datetime import datetime
@@ -224,9 +225,45 @@ class LinuxHandler:
     # ---------------------------------------------------------------- #
 
     def reboot(self, args: dict) -> dict:
-        subprocess.run(["reboot"], shell=False)
+        result = subprocess.run(["reboot"], shell=False, capture_output=True)
+        if result.returncode != 0:
+            return {"status": "error", "error": result.stderr.decode(errors="replace").strip() or "reboot failed"}
         return {"status": "success", "message": "Rebooting...", "data": {}}
 
     def shutdown(self, args: dict) -> dict:
-        subprocess.run(["shutdown", "-h", "now"], shell=False)
+        result = subprocess.run(["shutdown", "-h", "now"], shell=False, capture_output=True)
+        if result.returncode != 0:
+            return {"status": "error", "error": result.stderr.decode(errors="replace").strip() or "shutdown failed"}
         return {"status": "success", "message": "Shutting down...", "data": {}}
+
+    # ---------------------------------------------------------------- #
+    # push / pull (BUG 1)                                              #
+    # ---------------------------------------------------------------- #
+
+    def push(self, args: dict) -> dict:
+        """Copy a file from TCC host to this device (local copy)."""
+        src = args.get("src", "").strip()
+        dst = args.get("dst", "").strip()
+        if not src or not dst:
+            return {"status": "error", "error": "Usage: push <src> <dst>"}
+        src_abs = os.path.realpath(src)
+        dst_abs = os.path.realpath(dst)
+        if not os.path.exists(src_abs):
+            return {"status": "error", "error": f"Source not found: {src}"}
+        try:
+            if os.path.isdir(dst_abs):
+                dst_abs = os.path.join(dst_abs, os.path.basename(src_abs))
+            os.makedirs(os.path.dirname(dst_abs) or ".", exist_ok=True)
+            shutil.copy2(src_abs, dst_abs)
+            size_kb = os.path.getsize(dst_abs) // 1024
+            return {
+                "status": "success",
+                "message": f"Copied {src} → {dst_abs} ({size_kb}KB)",
+                "data": {"dst": dst_abs, "size_kb": size_kb},
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
+    def pull(self, args: dict) -> dict:
+        """Copy a file from this device to TCC host (local copy)."""
+        return self.push(args)
