@@ -65,13 +65,21 @@ def parse(raw_input: str) -> Intent:
 
     # Unknown first token — try pattern matching before NLP
     if first not in TARGETS:
-        # If the first word IS a known action verb, assume 'system' target.
-        # e.g. "open calculator", "screenshot", "battery", "lock"
+        # If the first word IS a known action verb, assume 'system' target —
+        # BUT only for short/simple commands (e.g. "open chrome", "battery", "screenshot").
+        # Longer inputs that look like natural language (contain "and", pronouns,
+        # multiple action verbs) should go to the LLM so nothing is silently dropped.
         if first in ACTIONS:
-            intent = Intent(raw=raw, target="system", action=first)
-            _parse_args(intent, tokens[1:])
-            return intent
-        # Otherwise hand off to LLM / NLP layer
+            _NLP_WORDS = {"and", "my", "me", "the", "a", "please", "can", "could", "then", "also", "with"}
+            is_compound = len(tokens) > 3 and (
+                any(t.lower() in _NLP_WORDS for t in tokens[1:])
+                or any(t.lower() in ACTIONS for t in tokens[1:])  # multiple verbs
+            )
+            if not is_compound:
+                intent = Intent(raw=raw, target="system", action=first)
+                _parse_args(intent, tokens[1:])
+                return intent
+        # Otherwise (or compound NL command) — hand off to LLM / NLP layer
         return Intent(
             raw=raw,
             target="__nlp__",
