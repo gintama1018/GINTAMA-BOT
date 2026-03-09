@@ -33,6 +33,8 @@ from src.logger import StructuredLogger
 from src.discovery import DeviceDiscovery
 from src.llm import LLMAdapter
 from src.scheduler import Scheduler
+from src.agent_loop import AgentLoop
+from src.session_manager import SessionManager
 
 
 PROMPT_STYLE = Style.from_dict({"": "bold cyan"})
@@ -40,7 +42,8 @@ PROMPT_STYLE = Style.from_dict({"": "bold cyan"})
 BANNER = """\
 ╔══════════════════════════════════════════╗
 ║     TCC — Terminal Command Center        ║
-║     Codename: JARVIS  v2.0               ║
+║     Codename: JARVIS  v3.0               ║
+║     Agent Loop: Gemini Function Calling  ║
 ╚══════════════════════════════════════════╝"""
 
 
@@ -60,7 +63,15 @@ class TCC_CLI:
         self.discovery = DeviceDiscovery(self.config, self.logger)
         self.executor = LocalExecutor(self.config, self.logger)
         self.router = CommandRouter(self.config, self.logger)
-        self.llm = LLMAdapter(self.config, self.logger)
+        self.llm = LLMAdapter(self.config, self.logger)  # kept for simple single-intent fallback
+        self.sessions = SessionManager()
+        self.agent_loop = AgentLoop(
+            self.config,
+            self.logger,
+            executor=self.executor,
+            router=self.router,
+            session_manager=self.sessions,
+        )
         self.scheduler = Scheduler(self.config, self.logger, self._run_skill_by_name)
         self._project_root = project_root
         self._skill_triggers: Optional[dict] = None  # BUG 5: cache
@@ -138,9 +149,12 @@ class TCC_CLI:
             self._run_skill(triggers[normalized])
             return
 
-        # NLP route — first token was not a known target
+        # NLP route — route through the Agent Loop (Gemini function calling)
         if intent.target == "__nlp__":
-            if self.llm.is_available():
+            if self.agent_loop.is_available():
+                self._run_agent_loop(intent.args.get("text", intent.raw))
+            elif self.llm.is_available():
+                # Fallback: old single-intent extraction
                 nlp_intent = self.llm.extract_intent(intent.args.get("text", intent.raw))
                 if nlp_intent and nlp_intent.target not in ("__nlp__", None, ""):
                     intent = nlp_intent
@@ -156,7 +170,7 @@ class TCC_CLI:
                     "or set [bold]llm.enabled=true[/bold] in config.toml for natural language. "
                     "Type [bold]help[/bold] for all commands.[/yellow]"
                 )
-                return
+            return
 
         # Route to system executor or remote device
         start = time.perf_counter()
@@ -213,6 +227,49 @@ class TCC_CLI:
         )
 
     # ---------------------------------------------------------------- #
+    # Agent loop handler                                               #
+    # ---------------------------------------------------------------- #
+
+    def _run_agent_loop(self, text: str) -> None:
+        """Run the Gemini agent loop for a natural-language command, with live tool display."""
+        self.console.print(f"[dim]🤖 JARVIS thinking...[/dim]")
+
+        def on_tool_call(tool_name: str, args: dict) -> None:
+            # Prettify the tool name for display
+            display = tool_name.replace("_", " ")
+            args_str = ", ".join(f"{k}={v!r}" for k, v in (args or {}).items())
+            self.console.print(f"  [cyan]⚙[/cyan] [bold]{display}[/bold]({args_str})")
+
+        def on_tool_result(tool_name: str, result: dict) -> None:
+            status = result.get("status", "?")
+            if status == "ok" or status == "success":
+                # Show a brief success indicator
+                msg = result.get("message", result.get("data", ""))
+                if isinstance(msg, dict):
+                    msg = str(msg)
+                snippet = str(msg)[:80] if msg else "ok"
+                self.console.print(f"  [green]✓[/green] {snippet}")
+            elif status in ("error", "blocked"):
+                err = result.get("error", "failed")
+                self.console.print(f"  [red]✗[/red] {err}")
+
+        start = time.perf_counter()
+        response = self.agent_loop.run(
+            user_message=text,
+            channel="terminal",
+            sender_id="local",
+            on_tool_call=on_tool_call,
+            on_tool_result=on_tool_result,
+        )
+        latency_ms = int((time.perf_counter() - start) * 1000)
+
+        # Print final response
+        if response and response.strip():
+            self.console.print(f"\n[bold green]JARVIS:[/bold green] {response}  [dim][{latency_ms}ms][/dim]")
+        else:
+            self.console.print(f"[dim]Done  [{latency_ms}ms][/dim]")
+
+    # ---------------------------------------------------------------- #
     # Special command handlers                                          #
     # ---------------------------------------------------------------- #
 
@@ -232,6 +289,10 @@ class TCC_CLI:
             self._cmd_skills()
         elif a == "help":
             self._cmd_help()
+        elif a == "sessions":
+            self._cmd_sessions()
+        elif a == "memory":
+            self._cmd_memory()
 
     def _cmd_devices(self, intent: Intent) -> None:
         if "refresh" in intent.flags:
@@ -393,20 +454,49 @@ class TCC_CLI:
     # Banner                                                            #
     # ---------------------------------------------------------------- #
 
+    def _cmd_sessions(self) -> None:
+        """List all agent loop sessions with last active time."""
+        sessions = self.sessions.list_sessions()
+        if not sessions:
+            self.console.print("[dim]No sessions yet. Start chatting to create one.[/dim]")
+            return
+        table = Table(title="JARVIS Sessions", border_style="blue", show_lines=True)
+        table.add_column("Session ID", style="bold cyan", min_width=20)
+        table.add_column("Channel", style="yellow", min_width=10)
+        table.add_column("Last Active", style="white", min_width=20)
+        for s in sessions:
+            table.add_row(s["id"], s["channel"], s["last_active"])
+        self.console.print(table)
+
+    def _cmd_memory(self) -> None:
+        """Show user memory stored for this terminal session."""
+        mem = self.sessions.get_memory("terminal", "local")
+        if not mem:
+            self.console.print("[dim]No memory stored yet. Tell JARVIS your preferences![/dim]")
+            self.console.print("[dim]Example: \"remember that I prefer responses in Hindi\"[/dim]")
+            return
+        self.console.print("[bold cyan]JARVIS Memory:[/bold cyan]")
+        for k, v in mem.items():
+            self.console.print(f"  [yellow]{k}:[/yellow] {v}")
+
+    # ---------------------------------------------------------------- #
+    # Banner                                                            #
+    # ---------------------------------------------------------------- #
+
     def _print_banner(self) -> None:
         online = self.discovery.count_online()
         ts_status = "ON" if self.discovery.tailscale_available() else "OFF"
         ts_color = "green" if ts_status == "ON" else "red"
-        llm_status = "ON" if self.llm.is_available() else "OFF"
-        llm_color = "green" if llm_status == "ON" else "yellow"
+        agent_status = "ON" if self.agent_loop.is_available() else ("ON" if self.llm.is_available() else "OFF")
+        agent_color = "green" if agent_status == "ON" else "yellow"
 
         body = (
             f"[bold cyan]TCC — Terminal Command Center[/bold cyan]\n"
-            f"[bold yellow]Codename: JARVIS  v2.0[/bold yellow]\n\n"
+            f"[bold yellow]Codename: JARVIS  v3.0  [Agent Loop][/bold yellow]\n\n"
             f"[green]{online}[/green] device(s) online  │  "
             f"Tailscale: [{ts_color}]{ts_status}[/{ts_color}]  │  "
-            f"LLM: [{llm_color}]{llm_status}[/{llm_color}]\n\n"
-            f"[dim]Type [bold]help[/bold] for commands, [bold]devices[/bold] to list your devices.[/dim]"
+            f"Agent: [{agent_color}]{agent_status}[/{agent_color}]\n\n"
+            f"[dim]Speak naturally or type [bold]help[/bold] for commands.[/dim]"
         )
         self.console.print(Panel(body, border_style="bold blue", padding=(1, 3)))
 
@@ -437,8 +527,19 @@ HELP_TEXT = """\
   logs --level ERROR       Filter by log level
   logs --device phone      Filter by device
   skills                   List automation skills
+  sessions                 Show all conversation sessions
+  memory                   Show what JARVIS remembers about you
   help                     Show this reference
   exit / quit              Close TCC
+
+[bold]NATURAL LANGUAGE (Agent Loop)[/bold]
+  Just type anything — JARVIS uses Gemini to understand:
+  "take a selfie"
+  "what's my phone battery"
+  "open youtube on my phone"
+  "take a screenshot of my laptop"
+  "search the web for Python tutorials"
+  "open camera and take a photo"
 
 [bold]EXAMPLES[/bold]
   phone screenshot
@@ -452,3 +553,4 @@ HELP_TEXT = """\
   all notify "Dinner is ready"
   good morning             (skill trigger — runs morning routine)
 """
+

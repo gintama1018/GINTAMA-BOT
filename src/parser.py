@@ -21,7 +21,7 @@ from typing import Any, List, Optional
 
 TARGETS = {"system", "phone", "laptop", "server", "all"}
 
-SPECIAL_COMMANDS = {"devices", "logs", "skills", "help", "exit", "quit", "clear"}
+SPECIAL_COMMANDS = {"devices", "logs", "skills", "help", "exit", "quit", "clear", "sessions", "memory"}
 
 ACTIONS = {
     "info", "screenshot", "launch", "open", "lock", "unlock",
