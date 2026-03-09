@@ -1,0 +1,61 @@
+# ============================================================
+#  TCC — Terminal Command Center | JARVIS v2.0
+#  User Configuration
+#  Edit this file to register your devices.
+# ============================================================
+
+[tcc]
+version     = "2.0"
+log_level   = "INFO"          # DEBUG | INFO | WARNING | ERROR
+log_dir     = "logs"
+screenshot_dir = "screenshots"
+
+# ============================================================
+# DEVICES — add one [devices.<name>] block per device
+# ============================================================
+
+[devices.laptop]
+name        = "laptop"
+type        = "windows"           # windows | linux | android | mac
+ip          = "127.0.0.1"         # LAN IP or Tailscale IP (100.x.x.x)
+port        = 7070
+auth_token  = "CHANGE_ME_strong_secret_token_here"
+transport   = "lan"               # lan | tailscale | adb
+
+# Uncomment and fill to add your phone:
+#[devices.phone]
+#name        = "phone"
+#type        = "android"
+#ip          = ""                 # Leave empty to use ADB instead of HTTP agent
+#port        = 7070
+#auth_token  = "CHANGE_ME_phone_secret_token"
+#transport   = "adb"              # adb = direct ADB, no agent needed
+
+# Uncomment to add a remote server:
+#[devices.server]
+#name        = "server"
+#type        = "linux"
+#ip          = "100.87.12.9"      # Tailscale IP
+#port        = 7070
+#auth_token  = "CHANGE_ME_server_token"
+#transport   = "tailscale"
+
+# ============================================================
+# LOCAL LLM — optional natural language mode via Ollama
+# ============================================================
+
+[llm]
+enabled              = false           # set true after: ollama pull mistral
+host                 = "http://localhost:11434"
+model                = "mistral"       # or "llama3", "phi3", etc.
+timeout              = 30
+confidence_threshold = 0.85
+
+# ============================================================
+# SCHEDULER — run skills on a schedule (optional)
+# ============================================================
+
+[schedule]
+# morning = "07:00 daily"
+# backup  = "23:00 daily"
+# focus   = "09:00 weekdays"

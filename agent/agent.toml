@@ -1,0 +1,43 @@
+# ============================================================
+#  TCC — Device Agent Configuration
+#  Deploy this file alongside agent.py on each device.
+#  One file per device.
+# ============================================================
+
+[agent]
+device_name   = "my-device"           # Human-readable name
+device_type   = "windows"             # windows | linux | android | darwin
+listen_port   = 7070
+listen_host   = "0.0.0.0"            # Change to Tailscale IP for security
+log_level     = "INFO"
+
+# IMPORTANT: Change this to a strong random secret.
+# Must match auth_token in the TCC client config.toml.
+auth_token    = "CHANGE_ME_strong_secret_token_here"
+
+[permissions]
+# Actions this device is ALLOWED to respond to.
+# If empty, all non-denied actions are permitted.
+allowed_actions = [
+    "screenshot",
+    "battery",
+    "info",
+    "status",
+    "launch",
+    "open",
+    "volume",
+    "brightness",
+    "lock",
+    "push",
+    "pull",
+    "ls",
+    "notify",
+]
+
+# Actions explicitly DENIED on this device.
+# These cannot be enabled via allowed_actions.
+denied_actions = [
+    "reboot",
+    "shutdown",
+    "run",
+]

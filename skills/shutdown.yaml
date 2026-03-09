@@ -1,0 +1,10 @@
+name: shutdown
+trigger:
+  - "shutdown routine"
+  - "end of day"
+  - "wrap up"
+  - "good night"
+steps:
+  - all notify "Saving work. Shutting down in 30 seconds."
+  - phone lock
+  - system lock

@@ -1,0 +1,9 @@
+name: backup
+trigger:
+  - "backup photos"
+  - "sync phone"
+  - "backup"
+  - "pull photos"
+steps:
+  - phone pull /sdcard/DCIM ./backups/photos
+  - all notify "Photo backup complete."

@@ -1,0 +1,12 @@
+name: morning
+trigger:
+  - "good morning"
+  - "morning routine"
+  - "start my day"
+  - "morning"
+steps:
+  - system open chrome
+  - system info
+  - phone battery
+  - phone volume 10
+  - all notify "Good morning. System is ready."

@@ -1,0 +1,10 @@
+name: focus
+trigger:
+  - "focus mode"
+  - "focus time"
+  - "deep work"
+  - "do not disturb"
+steps:
+  - phone volume 0
+  - phone lock
+  - all notify "Focus mode activated. Notifications silenced."
